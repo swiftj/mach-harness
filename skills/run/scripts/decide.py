@@ -26,6 +26,8 @@ Entry point, wired in by run.py:
     held_by        callable(ticket_id) -> a sentence, or None when no live worker holds the ticket's claim (run.py's
                    held_by_worker: a claim a stopped Factory execution left is nobody's); by default every fresh claim counts
     factory_run    callable(ticket_id) -> whether that claim is a live Factory run's, so "Take it over" says the run is ended
+    at_stake       callable(ticket_id) -> {"unmerged_commits", "uncommitted_files"} or None: what abandoning deletes that is nowhere
+                   else (run.py's read-only git queries), said in the abandon option's `does`
 
 The result: `nothing_waiting`, `order` (tickets a person's approval or merge unblocks first, then stuck ones; stable
 otherwise), `tickets` (one record each, in that order) and `not_waiting` (a plain answer for each named ticket that
@@ -40,7 +42,7 @@ Each option has `key`, `label` (one to five words), `does` (one sentence), `rout
 it out, or null for "wait"), `needs_reason`, `recommended`, `do` (whether `run.py decide do` carries it out by itself;
 act.py), `needs` (the other inputs it takes: "test_cmd", "answers"), `confirm` (a decision a person confirms first: it
 cannot be undone, or it stops another worker) and `takes_over` (act.py takes the step from the other worker as it records
-this decision, so the Factory can run the ticket). At most three options; "Skip for now" is the skill's own and is never listed here. `recommendation`
+this decision, so the Factory can run the ticket). At most three options and, last, "Abandon the ticket" (never the only one, first or recommended); "Skip for now" is the skill's own and is never listed here. `recommendation`
 is {"basis": "rule", "why": ...} only where a rule decides it, never for approving or rejecting a change; otherwise
 {"basis": "judgement"}.
 
@@ -341,45 +343,19 @@ def answers_pending(cellroot: Path, cell: Dict[str, Any]) -> bool:
 
 def abandon(ticket: str, extra: str = "") -> Dict[str, Any]:
     """Abandon: never the only option, never first and never recommended. Its `does` gets what is deleted (work_at_stake) in record()."""
-    return option("abandon", "Abandon the ticket",
-                  "The cleanup station deletes the ticket's work from this machine for good: its cell, worktrees, local branch and the refs MACH "
-                  "kept for it, and closes the ticket as abandoned" + extra + ".",
-                  f'abandon {ticket} "<why>"', needs_reason=True)
+    item = option("abandon", "Abandon the ticket", abandon_does(None, extra), f'abandon {ticket} "<why>"', needs_reason=True)
+    item["_extra"] = extra
+    return item
 
 
-def git_out(cwd: Path, *args: str) -> Optional[str]:
-    import subprocess
-    try:
-        done = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, errors="replace", stdin=subprocess.DEVNULL, timeout=20)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return done.stdout if done.returncode == 0 else None
-
-
-def work_at_stake(root: Path, cellroot: Path, cell: Dict[str, Any]) -> Optional[Dict[str, int]]:
-    """What abandoning deletes that is nowhere else: the branch's commits the main checkout's HEAD does not have, and the uncommitted
-    files in the cell's checkout. Read-only git queries; None when they cannot be counted."""
-    branch = cell.get("branch") if isinstance(cell.get("branch"), str) else None
-    commits = 0
-    if branch and cell.get("isolation") == "worktree":
-        counted = git_out(root, "rev-list", "--count", f"refs/heads/{branch}", "^HEAD")
-        if counted is None or not counted.strip().isdigit():
-            return None
-        commits = int(counted.strip())
-    files = 0
-    repo = cellroot / "repo"
-    if cell.get("isolation") == "worktree" and repo.is_dir():
-        listed = git_out(repo, "status", "--porcelain", "--untracked-files=all")
-        files = len([line for line in (listed or "").splitlines() if line.strip()])
-    return {"unmerged_commits": commits, "uncommitted_files": files}
-
-
-def stake_words(stake: Optional[Dict[str, int]]) -> str:
-    if stake is None:
-        return " Nothing is archived or kept."
-    commits, files = stake["unmerged_commits"], stake["uncommitted_files"]
-    return (f" That deletes {commits} unmerged commit{'s' if commits != 1 else ''} and {files} uncommitted file{'s' if files != 1 else ''}; "
-            "nothing is archived or kept.")
+def abandon_does(stake: Optional[Dict[str, Any]], extra: str = "") -> str:
+    """One sentence: the work is deleted for good, how much of it is nowhere else, and that nothing is archived."""
+    counted = ""
+    if isinstance(stake, dict) and isinstance(stake.get("unmerged_commits"), int) and isinstance(stake.get("uncommitted_files"), int):
+        commits, files = stake["unmerged_commits"], stake["uncommitted_files"]
+        counted = (f", with its {commits} unmerged commit{'s' if commits != 1 else ''} and {files} uncommitted file{'s' if files != 1 else ''}")
+    return ("The cleanup station deletes the ticket's work from this machine for good (its cell, worktrees, local branch and the refs MACH kept "
+            f"for it{counted}), keeps no archive, and closes the ticket as abandoned{extra}.")
 
 
 def carry_on_option(ticket: str) -> Dict[str, Any]:
@@ -550,7 +526,8 @@ def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, An
 
 def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Dict[str, Any], config: Dict[str, Any],
            parked: Dict[str, Dict[str, Any]], intent_skill: str, now: datetime, run_skill: str = "/mach",
-           held_by: Optional[Callable[[str], Optional[str]]] = None, factory_run: Optional[Callable[[str], bool]] = None) -> Dict[str, Any]:
+           held_by: Optional[Callable[[str], Optional[str]]] = None, factory_run: Optional[Callable[[str], bool]] = None,
+           at_stake: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None) -> Dict[str, Any]:
     cellroot = root / ".factory" / "worktrees" / ticket
     cell = load_json(cellroot / "cell.json", {}) or {}
     cell = cell if isinstance(cell, dict) else {}
@@ -585,8 +562,8 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
             facts["note"] = "This round's findings file is missing, so approval is not offered: a person sees the findings before approving."
         last = type(decision.get("round")) is int and decision["round"] - explain.rounds_base(cell) >= explain.max_rounds(config, cell)
         options.append(option("send-back", "Send it back",
-                              ("The review station records the person's reason. This is the ticket's last round, so it stops after that; carrying it on "
-                               "then gives the builder one more round with the reason as the finding."
+                              ("The review station records the person's reason; as this is the ticket's last round, the ticket then stops, and carrying "
+                               "it on gives the builder one more round with the reason as the finding."
                                if last else "The review station records the person's reason as the finding to answer, and the builder revises; it uses one of the ticket's rounds."),
                               f'send-back {ticket} "<why>"', needs_reason=True))
         options.append(abandon(ticket))
@@ -805,10 +782,10 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
         options.insert(0, run_again(ticket, "The line reads the ticket's records again and carries it on from where they say it is.", "Check it again"))
     ahead = [item for item in options if item["key"] != "abandon"]
     given_up = [item for item in options if item["key"] == "abandon"]
-    options = ahead[:3 - len(given_up[:1])] + given_up[:1]
-    for item in given_up[:1]:
+    options = ahead[:3] + given_up[:1]  # abandon, where it is offered, comes last
+    for item in given_up:
         item["recommended"] = False
-        item["does"] += stake_words(work_at_stake(root, cellroot, cell) if cell else None)
+        item["does"] = abandon_does(at_stake(ticket) if at_stake is not None and cell else None, item.pop("_extra", ""))
     if rule and options:
         options[0]["recommended"] = True
     mark(options, state, claimed=bool(claim))
@@ -829,7 +806,7 @@ def not_waiting(ticket: str, info: Dict[str, Any]) -> Dict[str, Any]:
 def main(ticket_ids: Sequence[str], root: Path, *, config: Dict[str, Any], next_step: Callable[[str], Dict[str, Any]],
          intent_skill: str = "/mach-intent", explain_facts: Optional[Callable[[str, Dict[str, Any]], Dict[str, Any]]] = None,
          now: Optional[datetime] = None, run_skill: str = "/mach", held_by: Optional[Callable[[str], Optional[str]]] = None,
-         factory_run: Optional[Callable[[str], bool]] = None) -> Dict[str, Any]:
+         factory_run: Optional[Callable[[str], bool]] = None, at_stake: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None) -> Dict[str, Any]:
     """Every ticket waiting on a person (or the ones named), with its options, in the order to walk them."""
     root = Path(root)
     config = config if isinstance(config, dict) else {}
@@ -849,7 +826,7 @@ def main(ticket_ids: Sequence[str], root: Path, *, config: Dict[str, Any], next_
             if named:
                 answers.append(not_waiting(ticket, info))
             continue
-        waiting.append(record(root, ticket, state, info, report, config, parked, intent_skill, moment, run_skill, held_by, factory_run))
+        waiting.append(record(root, ticket, state, info, report, config, parked, intent_skill, moment, run_skill, held_by, factory_run, at_stake))
     waiting = [item for _, item in sorted(enumerate(waiting), key=lambda pair: (pair[1]["state"] not in UNBLOCKED_BY_A_PERSON, pair[0]))]
     return {"reads_only": True, "nothing_waiting": not waiting, "order": [item["ticket_id"] for item in waiting], "tickets": waiting,
             "not_waiting": answers, "data_fields": list(DATA_FIELDS), "data_note": DATA_NOTE,

@@ -248,7 +248,7 @@ class StationTest(Base):
         result = self.do("send-back", reason="Still wrong after three rounds.")
         self.assertEqual(self.station.calls[-1], ("ticket", ["update", TICKET, "--state=blocked", "--label=blocked-requires-sme"]))
         self.assertEqual((result["supervisor"], self.carried), ("none", []))
-        self.assertIn("escalated, not built again", result["now"])
+        self.assertIn("It was its last round, so it stops for a person: /mach decide do LOCAL-001 carry-on gives the builder one more round", result["now"])
         self.assertEqual(result["ticket"], {"updated": True})
 
     def test_a_station_refusal_is_said_in_its_own_words_and_nothing_else_happens(self):
@@ -279,7 +279,7 @@ class StationTest(Base):
         self.write(TICKET, "lifecycle.jsonl", json.dumps({"at": "2026-11-24T10:00:00Z", "type": "gate.evaluated", "station": "build",
                                                           "data": {"gate": "build.next", "outcome": "refuse", "reason_code": "no-test-command"}}) + "\n")
         offered = [o["key"] for o in self.report(TICKET)["tickets"][0]["options"]]
-        self.assertEqual(offered, ["set-test-command", "run", "replan"])
+        self.assertEqual(offered, ["set-test-command", "run", "replan", "abandon"])
         self.refused("set-test-command", "needs the command that runs the tests", reason="The project runs unittest.")
         self.do("set-test-command", test_cmd="python3 -m unittest", reason="The project runs unittest.", via="floor")
         self.assertEqual(self.station.calls[-1], ("build", ["set-commands", TICKET, "--test-cmd=python3 -m unittest", "--reason=The project runs unittest.",
@@ -295,6 +295,40 @@ class StationTest(Base):
         self.assertEqual((result["done"], result["supervisor"], result["why_not"]), (True, "none", "Claude Code is not on the PATH."))
         self.assertEqual(result["now"], "Dana Smith's approval of LOCAL-001 is recorded. Claude Code is not on the PATH. /mach LOCAL-001 in Claude Code "
                                         "carries it on: it merges or waits, as the project's merge settings say.")
+
+
+class CarryOnTest(Base):
+    """A person carries a stopped ticket on: build.py carry-on, with their guidance, then the ticket's label is taken off."""
+
+    def blocked(self):
+        self.cell(stage="blocked")
+        self.write(TICKET, "build.json", {"loop": 2, "tasks": [{"id": "T01", "status": "done"}]})
+        self.write(TICKET, "review/round-3/findings.md", "x")
+        self.write(TICKET, "review/decision.json", {"outcome": "ESCALATE", "round": 3, "findings": str(self.cellroot() / "review/round-3/findings.md")})
+        self.station.answers[("build", "carry-on")] = (0, json.dumps({"status": "CARRIED_ON", "round": 4, "max_rounds": 4}), "")
+
+    def test_carry_on_with_guidance_runs_the_build_station_and_hands_it_to_the_factory(self):
+        self.blocked()
+        self.park()
+        result = self.do("carry-on", guidance="Only R2 is left: wire the retry to the queue.")
+        self.assertEqual(self.station.calls, [
+            ("build", ["carry-on", TICKET, "--by=Dana Smith", "--via=terminal", "--guidance=Only R2 is left: wire the retry to the queue."]),
+            ("ticket", ["update", TICKET, "--state=in_progress", "--remove-label=blocked-requires-sme"])])
+        self.assertEqual((result["done"], result["unparked"], self.carried), (True, True, [True]))
+        self.assertTrue(result["now"].startswith("Dana Smith carried LOCAL-001 on: round 4 of 4, on the same branch, with the last findings and their guidance."),
+                        result["now"])
+
+    def test_carry_on_without_guidance_and_guidance_only_where_it_is_taken(self):
+        self.blocked()
+        self.do("carry-on")
+        self.assertEqual(self.station.calls[0], ("build", ["carry-on", TICKET, "--by=Dana Smith", "--via=terminal"]))
+        self.awaiting()
+        self.carried.clear()
+        self.refused("approve", "takes no guidance", guidance="Please")
+
+    def test_long_guidance_is_refused_with_nothing_recorded(self):
+        self.blocked()
+        self.refused("carry-on", "at most 4000 characters", guidance="x" * 4001)
 
 
 class AbandonTest(Base):
@@ -313,7 +347,7 @@ class AbandonTest(Base):
             ("ticket", ["update", TICKET, "--state=closed", "--label=abandoned", "--comment=We will not ship invites this quarter."])])
         self.assertEqual((result["supervisor"], result["unparked"], self.carried), ("none", True, []))
         self.assertEqual(result["station"]["plan"], {"archive": "x.tar.gz"})
-        self.assertIn("To get its work back: git fetch x.bundle", result["now"])
+        self.assertIn("Its archive is kept, as asked: git fetch x.bundle", result["now"], "only a kept archive is said")
         ledger = json.loads((self.project / ".factory/intake/ledger.json").read_text())
         self.assertEqual((ledger["supervisor"]["parked"], ledger["supervisor"]["attempts"], ledger["pending_events"]), ({}, {}, []),
                          "an abandoned ticket is let go without a resume event")

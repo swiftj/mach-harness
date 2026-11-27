@@ -1762,7 +1762,7 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
         telemetry(cell.root, "station.entered", "build", lambda: {"stage": "blocked", "revision": loop})
         telemetry(cell.root, "station.exited", "build", lambda: {"outcome": "escalated", "stage": "blocked"})
         print(json.dumps({
-            "status": "ESCALATE", "loops_used": counted, "max_rounds": limit,
+            "status": "ESCALATE", "loops_used": counted,
             "action": (f"This ticket failed round {counted} of {limit}, so it stops here for a person. A person carries it on with a fix: "
                        f"run.py decide do {cell.ticket_id} carry-on, with what the builder should do differently, or the same from the Factory Floor. "
                        "The builder then gets one more round on this branch, with the findings and the person's words, and nothing already "
@@ -1802,7 +1802,8 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
     guidance = cell.root / carried["guidance"] if carried and isinstance(carried.get("guidance"), str) else None
     guided = bool(guidance and guidance.is_file())
     telemetry(cell.root, "station.entered", "build", lambda: {"stage": "building", "revision": loop, "findings_copied": findings is not None,
-                                                             "synced_with_main": bool(synced), "carried_on_by_person": bool(carried), "guidance": guided})
+                                                             "synced_with_main": bool(synced),
+                                                             **({"carried_on_by_person": True, "guidance": guided} if carried else {})})
     steps = "Add one task per finding with 'add-task' (a [test] task first for any behavior that was wrong), then work them with red, green and done."
     if carried:
         steps = (("A person carried this ticket on after it stopped, and wrote what to do in " + str(guidance) + ". Read it first, as that person's "
@@ -1810,12 +1811,14 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
                  + "Make the smallest change that answers the findings" + (" and the person's guidance" if guided else "")
                  + ". Keep everything already proven: do not redo, rewrite or rebuild work the findings do not name. " + steps)
     counted = rule.used(cell.info, loop)
-    print(json.dumps({
-        "status": "REVISING", "loop": loop, "round": counted, "round_number": loop + 1, "max_rounds": limit, "rounds_left": max(limit - counted, 0),
-        "findings": str(findings) if findings else None, "guidance": str(guidance) if guided else None, "carried_on_by": carried.get("by") if carried else None,
-        "synced_with_main": merge_note(synced), "suite": cell.state.get("suite"), "tests_after_merge": after_merge,
-        "next": steps,
-    }, indent=2))
+    shown: Dict[str, Any] = {"status": "REVISING", "loop": loop, "round": counted, "rounds_left": max(limit - counted, 0),
+                             "findings": str(findings) if findings else None}
+    if rule.base(cell.info) or rule.extra(cell.info):  # a person carried it on or started the line afresh: the round's own number and the limit
+        shown.update({"round_number": loop + 1, "max_rounds": limit})
+    if carried:
+        shown.update({"guidance": str(guidance) if guided else None, "carried_on_by": carried.get("by")})
+    shown.update({"synced_with_main": merge_note(synced), "suite": cell.state.get("suite"), "tests_after_merge": after_merge, "next": steps})
+    print(json.dumps(shown, indent=2))
     return 0
 
 
