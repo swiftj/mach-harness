@@ -395,6 +395,8 @@ class Project:
                     record = json.loads(line)
                 except ValueError:
                     continue
+                if isinstance(record, dict) and record.get("ticket_id") == ticket_id and record.get("outcome") == "abandoned":
+                    return f"This ticket was abandoned at {record.get('closed_at') or 'an earlier time'}: its work was deleted from this machine."
                 if isinstance(record, dict) and record.get("ticket_id") == ticket_id:
                     return (f"This ticket is finished: it was {record.get('outcome', 'closed')} and cleaned up "
                             + (f"({record['archive']})." if isinstance(record.get('archive'), str) else "(no archive kept, cleanup.archive)."))
@@ -568,8 +570,7 @@ def next_step(project: Project, ticket_id: str, headless: bool, meet_on_main: bo
             findings = str(root / carried["findings"]) if isinstance(carried.get("findings"), str) and carried["findings"] else None
             guidance = root / carried["guidance"] if isinstance(carried.get("guidance"), str) and carried["guidance"] else None
             guided = guidance is not None and guidance.is_file()
-            who = (f"MACH gave this ticket a fresh set of rounds when {carried.get('by')} started the Factory" if carried.get("why") == "person-start"
-                   else "A person carried this ticket on after it stopped")
+            who = rounds_rule().who(carried)
             return step(ticket_id, stage, "revise", f"{who}; the builder revises it in round {carried.get('round')} "
                         f"of {carried.get('max_rounds')}, with the last findings" + (" and the person's guidance." if guided else "."),
                         agent_type=agent_type("builder"), findings=findings, guidance=str(guidance) if guided else None,
@@ -975,7 +976,8 @@ def recorded_cost(project: Project, ticket_ids: Sequence[str]) -> Dict[str, Any]
 def digest(project: Project, info: Dict[str, Any]) -> Dict[str, Any]:
     """Three lines for the top of a ticket's status: where it is, what a person must decide, time and cost."""
     ticket_id, stage, action = info.get("ticket_id"), info.get("stage"), info.get("action")
-    place = f"stage {stage}" if stage else "no cell yet"
+    place = f"stage {stage}" if stage else ("no cell: it was abandoned and its work deleted" if str(info.get("reason") or "").startswith("This ticket was abandoned")
+                                            else "no cell: finished" if info.get("needs") == "nothing" else "no cell yet")
     where = f"{ticket_id}: {place}; " + (f"stopped: {info.get('reason')}" if info.get("stop") else f"next: {action}. {info.get('reason')}")
     needs = info.get("needs") if info.get("stop") else None
     if needs and needs != "nothing":
@@ -1144,7 +1146,7 @@ def cell_tickets(project: Project) -> List[str]:
     return sorted(path.parent.name for path in base.glob("*/cell.json") if TICKET_ID_RE.match(path.parent.name)) if base.is_dir() else []
 
 
-def fresh_rounds(project: Project, tickets: Sequence[str], via: str = "terminal") -> Dict[str, Any]:
+def fresh_rounds(project: Project, tickets: Sequence[str], via: str = "terminal", start: str = "ticket") -> Dict[str, Any]:
     """A person started the line (pull, factory start or resume, or named the ticket): each ticket's rounds count from zero again
     (rounds.start_afresh). A ticket stopped for its rounds is carried on from the build station's revision with its last findings,
     and the supervisor's attempt count and hold for it are cleared, so it is picked up again. Nothing built is redone and no record
@@ -1160,7 +1162,7 @@ def fresh_rounds(project: Project, tickets: Sequence[str], via: str = "terminal"
         if not isinstance(ticket_id, str) or not TICKET_ID_RE.match(ticket_id) or not (project.cell_dir(ticket_id) / "cell.json").is_file():
             continue
         try:
-            answer = rule.start_afresh(project.cell_dir(ticket_id), project.config, by=by if len(by) >= 2 else "a person", via=via)
+            answer = rule.start_afresh(project.cell_dir(ticket_id), project.config, by=by if len(by) >= 2 else "a person", via=via, start=start)
         except Exception:  # noqa: BLE001 - the person's start goes on; this ticket keeps the count it had
             answer = None
         if not answer:
@@ -1168,11 +1170,7 @@ def fresh_rounds(project: Project, tickets: Sequence[str], via: str = "terminal"
         done["reset"].append(ticket_id)
         if answer.get("status") == "CARRIED_ON":
             done["carried_on"].append(ticket_id)
-            done["said"].append(f"Ticket {ticket_id} had used all its rounds; MACH gave it a fresh set and the builder is carrying on from the last findings.")
-    others = [ticket_id for ticket_id in done["reset"] if ticket_id not in done["carried_on"]]
-    if others:  # a ticket in the middle of its rounds: one sentence for all of them
-        names = others[0] if len(others) == 1 else ", ".join(others[:-1]) + " and " + others[-1]
-        done["said"].append(f"Ticket {names} starts with a fresh set of rounds." if len(others) == 1 else f"Tickets {names} start with a fresh set of rounds.")
+    done["said"] = fresh_words(done, {})
     if done["reset"]:
         release_holds(project, done["reset"])
         with contextlib.suppress(Exception):  # a running supervisor looks again now, so a ticket carried on is picked up at once
@@ -1180,6 +1178,27 @@ def fresh_rounds(project: Project, tickets: Sequence[str], via: str = "terminal"
             import activation
             activation.wake_note(project.root, "fresh-rounds")
     return done
+
+
+def fresh_words(done: Dict[str, Any], carrying: Dict[str, str]) -> List[str]:
+    """What a person's start did to each ticket's rounds, as is true: a ticket that had used all its rounds is said to be carried on
+    only where work really started on it (`carrying`: ticket -> "factory" or "here"); otherwise it has a fresh set and is carried on
+    by the next start. A ticket in the middle of its rounds: one sentence for all of them."""
+    said = []
+    for ticket_id in done.get("carried_on") or []:
+        how = carrying.get(ticket_id)
+        if how == "factory":
+            said.append(f"Ticket {ticket_id} had used all its rounds; MACH gave it a fresh set and the Factory is carrying it on from the last findings.")
+        elif how == "here":
+            said.append(f"Ticket {ticket_id} had used all its rounds; MACH gave it a fresh set and carries it on here from the last findings.")
+        else:
+            said.append(f"Ticket {ticket_id} had used all its rounds; MACH gave it a fresh set. Its next step is the builder's revision from the last "
+                        f"findings, which the Factory or {skill('run')} {ticket_id} carries on.")
+    others = [ticket_id for ticket_id in done.get("reset") or [] if ticket_id not in (done.get("carried_on") or [])]
+    if others:
+        names = others[0] if len(others) == 1 else ", ".join(others[:-1]) + " and " + others[-1]
+        said.append(f"Ticket {names} starts with a fresh set of rounds." if len(others) == 1 else f"Tickets {names} start with a fresh set of rounds.")
+    return said
 
 
 def release_holds(project: Project, tickets: Sequence[str]) -> None:
@@ -1222,7 +1241,7 @@ def cmd_next(project: Project, args: argparse.Namespace) -> int:
     fresh = fresh_rounds(project, [args.ticket_id]) if named else {"said": []}  # a person named it: its rounds count from zero again
     found = next_step(project, args.ticket_id, args.headless)
     if fresh["said"]:
-        found.setdefault("warnings", []).extend(fresh["said"])
+        found.setdefault("warnings", []).extend(fresh_words(fresh, {args.ticket_id: "here"} if not found.get("stop") else {}))
     if person and found.get("needs") == "landed-elsewhere":
         # The meeting point: a person carries a second copy of a slice on to the merge station, which brings main in and lands what
         # this copy still changes, or closes it out when nothing differs.
@@ -1566,7 +1585,7 @@ def cmd_decide(project: Project, args: argparse.Namespace) -> int:
     try:
         report = decide.main(ticket_ids, project.root, config=project.config, next_step=lambda ticket_id: next_step(project, ticket_id, False),
                              intent_skill=skill("intent"), run_skill=skill("run"), held_by=lambda ticket_id: held_by_worker(project, ticket_id),
-                             factory_run=lambda ticket_id: held_by_factory_run(project, ticket_id), at_stake=lambda ticket_id: work_at_stake(project, ticket_id))
+                             factory_run=lambda ticket_id: held_by_factory_run(project, ticket_id), at_stake=lambda ticket_id: work_at_stake(project, ticket_id), mine=getattr(args, "holder", None))
     except decide.DecideError as exc:
         raise RunError(str(exc))
     if resolved:
@@ -1662,7 +1681,7 @@ def cmd_decide_do(project: Project, args: argparse.Namespace, decide: Any, ticke
         try:
             return decide.main([ticket], project.root, config=project.config, next_step=lambda ticket_id: next_step(project, ticket_id, False),
                                intent_skill=skill("intent"), run_skill=skill("run"), held_by=lambda ticket_id: held_by_worker(project, ticket_id),
-                               factory_run=lambda ticket_id: held_by_factory_run(project, ticket_id), at_stake=lambda ticket_id: work_at_stake(project, ticket_id))
+                               factory_run=lambda ticket_id: held_by_factory_run(project, ticket_id), at_stake=lambda ticket_id: work_at_stake(project, ticket_id), mine=getattr(args, "holder", None))
         except decide.DecideError as exc:
             raise act.ActError(str(exc))
 
@@ -2261,7 +2280,7 @@ def cmd_pull(project: Project, args: argparse.Namespace) -> int:
     import pull
     import schedule
     # A person's pull starts the line: every ticket's rounds count from zero again, and one stopped for its rounds carries on.
-    fresh = fresh_rounds(project, cell_tickets(project)) if not args.dry_run else {"said": [], "reset": [], "carried_on": []}
+    fresh = fresh_rounds(project, cell_tickets(project), start="factory") if not args.dry_run else {"said": [], "reset": [], "carried_on": []}
     intake, line = factory(project)
     ctx = factory_context(project, line)
     try:
@@ -2276,8 +2295,12 @@ def cmd_pull(project: Project, args: argparse.Namespace) -> int:
             raise RunError(str(exc))
         raise
     if fresh["reset"]:
+        factory_section = report.get("factory") or {}
+        running = bool(factory_section.get("handed_over")) and factory_section.get("supervisor") not in (None, "none")
+        carrying = {ticket: ("factory" if running and ticket in (factory_section.get("tickets") or []) else "here" if ticket in (report.get("run") or []) else "")
+                    for ticket in fresh["carried_on"]}
         report["fresh_rounds"] = {"reset": fresh["reset"], "carried_on": fresh["carried_on"]}
-        report["in_words"] = fresh["said"] + list(report.get("in_words") or [])
+        report["in_words"] = fresh_words(fresh, {key: value for key, value in carrying.items() if value}) + list(report.get("in_words") or [])
     print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else pull.human(report))
     return 0
 
@@ -3093,8 +3116,10 @@ def cmd_factory(project: Project, args: argparse.Namespace) -> int:
     # for its rounds carries on (the supervisor is woken for it). Only once the start or resume really happened: a refused one changes
     # nothing. The supervisor's own passes and restarts (serve, tick, wake) never do this.
     started = isinstance(result, dict) and ((args.action in ("enable", "start") and bool(result.get("enabled")) and not result.get("held_by")) or (args.action == "resume" and bool(result.get("resumed"))))
-    fresh = fresh_rounds(project, cell_tickets(project)) if started else {"reset": []}
+    fresh = fresh_rounds(project, cell_tickets(project), start="factory") if started else {"reset": []}
     if fresh["reset"]:
+        running = result.get("supervisor") in ("started", "converted", "already-running", "service", "woken")
+        fresh["said"] = fresh_words(fresh, {ticket: "factory" for ticket in fresh["carried_on"]} if running else {})
         result["fresh_rounds"] = {key: fresh[key] for key in ("reset", "carried_on", "said")}
         result["in_words"] = " ".join(part for part in (*fresh["said"], result.get("in_words")) if isinstance(part, str) and part)
     print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -3138,6 +3163,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--test-cmd", metavar="CMD", help="decide do set-test-command: the command that runs the tests")
     p.add_argument("--answers-file", metavar="FILE", help='decide do answers: a JSON file, [{"n": 1, "answer": "..."}, {"n": 2, "leave_open": true}]')
     p.add_argument("--guidance", metavar="TEXT", help="decide do carry-on: what the builder should do differently, in the person's words (optional)")
+    p.add_argument("--holder", metavar="H", help="this conversation's holder token: its own claim on a ticket is not another worker's")
     p.add_argument("--via", choices=("terminal", "floor"), help="decide do: where the person decided (default: terminal)")
     p.add_argument("--to-factory", action="store_true",
                    help="decide do take-over: the Factory carries the ticket on afterwards (with --via=floor it always does); "

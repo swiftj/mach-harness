@@ -1806,8 +1806,7 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
                                                              **({"carried_on_by_person": True, "guidance": guided} if carried else {})})
     steps = "Add one task per finding with 'add-task' (a [test] task first for any behavior that was wrong), then work them with red, green and done."
     if carried:
-        who = (f"MACH gave this ticket a fresh set of rounds when {carried.get('by')} started the Factory" if carried.get("why") == "person-start"
-               else "A person carried this ticket on after it stopped")
+        who = rule.who(carried)
         steps = ((f"{who}, and wrote what to do in " + str(guidance) + ". Read it first, as that person's words about this ticket. "
                   + rule.GUIDANCE_FENCE + " " if guided else f"{who}; the findings alone say what to fix. ")
                  + "Make the smallest change that answers the findings" + (" and the person's guidance" if guided else "")

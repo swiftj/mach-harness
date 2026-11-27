@@ -26,6 +26,7 @@ Entry point, wired in by run.py:
     held_by        callable(ticket_id) -> a sentence, or None when no live worker holds the ticket's claim (run.py's
                    held_by_worker: a claim a stopped Factory execution left is nobody's); by default every fresh claim counts
     factory_run    callable(ticket_id) -> whether that claim is a live Factory run's, so "Take it over" says the run is ended
+    mine           the holder of the conversation asking (run.py decide --holder): its own claim is never "another worker"
     at_stake       callable(ticket_id) -> {"unmerged_commits", "uncommitted_files"} or None: what abandoning deletes that is nowhere
                    else (run.py's read-only git queries), said in the abandon option's `does`
 
@@ -188,12 +189,15 @@ def claim_minutes(config: Dict[str, Any]) -> int:
     return value if type(value) is int and value >= 1 else CLAIM_MINUTES
 
 
-def fresh_claim(cellroot: Path, stage: Optional[str], config: Dict[str, Any], now: datetime) -> Optional[Dict[str, Any]]:
+def fresh_claim(cellroot: Path, stage: Optional[str], config: Dict[str, Any], now: datetime, mine: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """The cell's claim (claim.json, design 5.1) when it is fresh: made at the cell's current stage, and made or renewed
-    less than factory.claim_minutes ago. The holder token is never passed on."""
+    less than factory.claim_minutes ago, and not the asker's own (`mine`, the holder of the conversation asking). The holder
+    token is never passed on."""
     claim = load_json(cellroot / "claim.json")
     if not isinstance(claim, dict) or not stage or claim.get("stage") != stage:
         return None
+    if mine and claim.get("holder") == mine:
+        return None  # the person's own claim, from their own /mach <ticket>: nobody else is at work
     moments = [moment for moment in (parse_time(claim.get("at")), parse_time(claim.get("renewed_at"))) if moment]
     if not moments:
         return None
@@ -206,13 +210,11 @@ def fresh_claim(cellroot: Path, stage: Optional[str], config: Dict[str, Any], no
 
 
 def clock(moment_text: Any, now: datetime) -> str:
-    """A time as a person reads it: 02:47 UTC on the day it is now, else with its date."""
+    """A time as a person reads it, always with its date: 2026-11-27 02:47 UTC (a UTC time alone reads as the wrong day elsewhere)."""
     moment = parse_time(moment_text)
     if moment is None:
         return "an earlier time"
-    moment = moment.astimezone(timezone.utc)
-    day = "" if moment.date() == now.astimezone(timezone.utc).date() else moment.strftime("%Y-%m-%d ")
-    return f"{day}{moment.strftime('%H:%M')} UTC"
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def claim_warning(claim: Dict[str, Any], now: datetime) -> str:
@@ -474,7 +476,7 @@ def situation(state: str, info: Dict[str, Any], report: Dict[str, Any], cell: Di
 
 def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, Any], config: Dict[str, Any],
              parked: Dict[str, Dict[str, Any]], now: datetime, named: bool = False,
-             held_by: Optional[Callable[[str], Optional[str]]] = None) -> Optional[str]:
+             held_by: Optional[Callable[[str], Optional[str]]] = None, mine: Optional[str] = None) -> Optional[str]:
     """Which waiting state the ticket is in, read from the stations' own files; None when it is not waiting on a person."""
     cellroot = root / ".factory" / "worktrees" / ticket
     cell = load_json(cellroot / "cell.json")
@@ -522,7 +524,7 @@ def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, An
             return "build-gate"
     if ticket in parked:
         return "parked"
-    held = isinstance(cell, dict) and fresh_claim(cellroot, stage, config, now) and (held_by is None or held_by(ticket))
+    held = isinstance(cell, dict) and fresh_claim(cellroot, stage, config, now, mine) and (held_by is None or held_by(ticket))
     if info.get("needs") == "worker-in-cell" or held:
         return "worker-in-cell"  # it waits for nothing but the other worker: a person may let it carry on or take it over
     return None
@@ -531,7 +533,7 @@ def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, An
 def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Dict[str, Any], config: Dict[str, Any],
            parked: Dict[str, Dict[str, Any]], intent_skill: str, now: datetime, run_skill: str = "/mach",
            held_by: Optional[Callable[[str], Optional[str]]] = None, factory_run: Optional[Callable[[str], bool]] = None,
-           at_stake: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None) -> Dict[str, Any]:
+           at_stake: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None, mine: Optional[str] = None) -> Dict[str, Any]:
     cellroot = root / ".factory" / "worktrees" / ticket
     cell = load_json(cellroot / "cell.json", {}) or {}
     cell = cell if isinstance(cell, dict) else {}
@@ -544,7 +546,7 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
     warnings: List[str] = []
     # Another worker's fresh claim is said, never a reason to hold a decision back. A claim a stopped Factory execution
     # left is nobody's (held_by says so), so it is not said.
-    claim = fresh_claim(cellroot, stage, config, now) if cell else None
+    claim = fresh_claim(cellroot, stage, config, now, mine) if cell else None
     if claim and held_by is not None and not held_by(ticket):
         claim = None
     if claim:
@@ -811,7 +813,8 @@ def not_waiting(ticket: str, info: Dict[str, Any]) -> Dict[str, Any]:
 def main(ticket_ids: Sequence[str], root: Path, *, config: Dict[str, Any], next_step: Callable[[str], Dict[str, Any]],
          intent_skill: str = "/mach-intent", explain_facts: Optional[Callable[[str, Dict[str, Any]], Dict[str, Any]]] = None,
          now: Optional[datetime] = None, run_skill: str = "/mach", held_by: Optional[Callable[[str], Optional[str]]] = None,
-         factory_run: Optional[Callable[[str], bool]] = None, at_stake: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None) -> Dict[str, Any]:
+         factory_run: Optional[Callable[[str], bool]] = None, at_stake: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
+         mine: Optional[str] = None) -> Dict[str, Any]:
     """Every ticket waiting on a person (or the ones named), with its options, in the order to walk them."""
     root = Path(root)
     config = config if isinstance(config, dict) else {}
@@ -826,12 +829,12 @@ def main(ticket_ids: Sequence[str], root: Path, *, config: Dict[str, Any], next_
     for ticket in named or open_tickets(root):
         info = next_step(ticket)
         report = facts(ticket, info)
-        state = classify(root, ticket, info, report, config, parked, moment, named=bool(named), held_by=held_by)
+        state = classify(root, ticket, info, report, config, parked, moment, named=bool(named), held_by=held_by, mine=mine)
         if state is None:
             if named:
                 answers.append(not_waiting(ticket, info))
             continue
-        waiting.append(record(root, ticket, state, info, report, config, parked, intent_skill, moment, run_skill, held_by, factory_run, at_stake))
+        waiting.append(record(root, ticket, state, info, report, config, parked, intent_skill, moment, run_skill, held_by, factory_run, at_stake, mine))
     waiting = [item for _, item in sorted(enumerate(waiting), key=lambda pair: (pair[1]["state"] not in UNBLOCKED_BY_A_PERSON, pair[0]))]
     return {"reads_only": True, "nothing_waiting": not waiting, "order": [item["ticket_id"] for item in waiting], "tickets": waiting,
             "not_waiting": answers, "data_fields": list(DATA_FIELDS), "data_note": DATA_NOTE,

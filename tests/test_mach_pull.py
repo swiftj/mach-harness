@@ -686,6 +686,10 @@ class HandOverTest(PullBase):
         self.assertEqual(self.runner()["autonomy"], "observe", "this machine's own setting is left as it was")
         self.assertIn("factory.autonomy_ceiling", done["in_words"])
         self.assertNotIn("set it to supervised", done["in_words"])
+        # Second check, finding 1: every field says what is in force.
+        self.assertEqual((done["factory"], done["summary"]["autonomy"]), ("observe", "observe"))
+        self.assertNotIn("Runs approved", done["summary"]["what_it_does"])
+        self.assertIn("factory.autonomy_ceiling", done["next"])
 
     def test_a_refused_resume_resets_no_rounds(self):
         """Review finding 7: a command that does nothing changes nothing."""
