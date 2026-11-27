@@ -224,8 +224,10 @@ def project_files(root: Path) -> Dict[str, bytes]:
             data = path.read_bytes()
             if relative.as_posix() == "SKILL.md":
                 text = unprefixed(data.decode("utf-8"), station)
-                # A skill that runs another skill's script names its folder: .claude/skills/mach-app/ in a project, skills/app/ here.
+                # A skill that runs another skill's script names its folder: .claude/skills/mach-studio/ (or .claude/skills/mach/
+                # for the run skill) in a project, skills/studio/ (skills/run/) here.
                 text = re.sub(r"(\$\{CLAUDE_SKILL_DIR\}/\.\./)mach-([a-z0-9-]+)/", r"\1\2/", text)
+                text = re.sub(r"(\$\{CLAUDE_SKILL_DIR\}/\.\./)mach/", r"\1run/", text)
                 data = text.encode("utf-8")
             files[f"skills/{station}/{relative.as_posix()}"] = data
     if "run" not in stations:

@@ -1,6 +1,7 @@
-"""/mach-app: one command that opens the visual Product Studio (and the Factory Floor), always the release of MACH
-installed in the project. skills/app/scripts/app.py decides every step; these tests replace what would start a
-program, signal one, read the process table or open a browser, so nothing here starts a real host or a browser."""
+"""/mach-studio and /mach floor: MACH's two web apps, Product Studio and the Factory Floor, opened in the person's
+browser, always the release of MACH installed in the project. skills/run/scripts/app.py decides every step, and the
+studio and run skills run it first (`for-skill`) with the words typed after the command; these tests replace what would
+start a program, signal one, read the process table or open a browser, so nothing here starts a real host or a browser."""
 
 import fcntl
 import importlib.util
@@ -8,13 +9,14 @@ import io
 import json
 import os
 import re
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = ROOT / "skills" / "app" / "scripts" / "app.py"
+SCRIPT = ROOT / "skills" / "run" / "scripts" / "app.py"
 _spec = importlib.util.spec_from_file_location("mach_app", SCRIPT)
 app = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(app)
@@ -264,7 +266,7 @@ class BringingItUpToDateTest(Base):
         code, result = self.mach_app()
         self.assertEqual(code, 1)
         self.assertEqual(result["in_words"], ["Product Studio is not installed on this computer (MACH could not fetch it: no build is published for Darwin x86_64). "
-                                              "Running MACH's installer again in this project fetches it; then /mach:app again."])
+                                              "Running MACH's installer again in this project fetches it; then /mach:studio again."])
         self.assertEqual(self.world.started, [])
 
     def test_a_newer_release_is_mentioned_in_one_line(self):
@@ -405,8 +407,9 @@ class BrowserAndWordsTest(Base):
     def test_unknown_words_say_the_forms(self):
         code, result = self.mach_app("please", "dance")
         self.assertEqual(code, 2)
-        self.assertEqual(result["in_words"], ["MACH did not understand 'please dance'. /mach:app opens Product Studio; /mach:app link gives its "
-                                              "link without a browser; /mach:app stop stops it; /mach:app floor does the same for the Factory Floor."])
+        self.assertEqual(result["in_words"], ["MACH did not understand 'please dance'. /mach:studio opens Product Studio; /mach:studio link gives its "
+                                              "link without a browser; /mach:studio stop stops it. /mach:run floor, /mach:run floor link and "
+                                              "/mach:run floor stop do the same for the Factory Floor."])
 
     def test_the_words_arrive_as_one_argument_from_the_skill(self):
         pid = self.world.run_already(app.STUDIO, "0.26.0")
@@ -421,7 +424,13 @@ class BrowserAndWordsTest(Base):
         code, result = self.mach_app()
         self.assertEqual(code, 1)
         self.assertIn("has no .factory folder", self.said(result))
-        self.assertIn("Run MACH's installer in this project (or /mach:init with the plugin), then /mach:app again.", self.said(result))
+        self.assertIn("Run MACH's installer in this project (or /mach:init with the plugin), then /mach:studio again.", self.said(result))
+
+    def test_the_commands_are_named_as_this_install_types_them(self):
+        self.assertEqual((app.command_name(self.root, app.STUDIO), app.command_name(self.root, app.FLOOR)), ("/mach:studio", "/mach:run floor"))
+        project_install = self.project / ".claude"
+        project_install.mkdir()
+        self.assertEqual((app.command_name(project_install, app.STUDIO), app.command_name(project_install, app.FLOOR)), ("/mach-studio", "/mach floor"))
 
 
 class FactoryFloorTest(Base):
@@ -512,25 +521,214 @@ class RealPiecesTest(unittest.TestCase):
         self.assertFalse(app.is_ours(app.STUDIO, 14, Path("/proj")))
 
 
-class SkillTest(unittest.TestCase):
-    def test_the_skill_runs_the_one_command_before_the_model_answers(self):
-        text = (ROOT / "skills" / "app" / "SKILL.md").read_text()
-        head = text.split("\n---", 1)[0]
-        self.assertIn("\nname: app\n", head)
-        self.assertIn("\ndisable-model-invocation: true\n", head)
-        self.assertIn('  - Bash(python3 "${CLAUDE_SKILL_DIR}/scripts/app.py" *)\n', head)
-        self.assertIn('\n!`python3 "${CLAUDE_SKILL_DIR}/scripts/app.py" "$ARGUMENTS"`\n', text)
-        self.assertIn("Add nothing, ask nothing, and run nothing else.", text)
-        self.assertNotIn("—", text)
+class ForSkillTest(Base):
+    """The skills' first line: MACH acts, and prints anything, only for an app's exact form."""
 
-    def test_the_studio_and_run_skills_run_the_same_command(self):
+    def for_skill(self, skill, typed):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = app.main_for_skill([skill, "--project", str(self.project)], stdin=io.StringIO(typed))
+        self.assertEqual(code, 0, "the skill's first line never fails")
+        return out.getvalue()
+
+    def answer_lines(self, printed):
+        lines = printed.splitlines()
+        self.assertEqual((lines[0], lines[-1]), (app.ANSWER_BEGIN, app.ANSWER_END), printed)
+        return lines[1:-1]
+
+    def test_nothing_typed_opens_product_studio_with_one_line_on_the_terminal(self):
+        self.world.install(app.STUDIO, "0.26.0")
+        said = self.answer_lines(self.for_skill("studio", "\n"))
+        self.assertEqual(said[0], "Product Studio 0.26.0 is open in your browser.")
+        self.assertEqual(said[-1], "To work here in the terminal instead, type /mach:studio status, or say what you want after /mach:studio.")
+        self.assertEqual(self.world.opened, [link(4201)])
+
+    def test_floor_opens_the_factory_floor_and_studio_opens_product_studio_from_the_run_skill(self):
+        self.world.install(app.FLOOR, "0.26.0")
+        self.world.install(app.STUDIO, "0.26.0")
+        said = self.answer_lines(self.for_skill("run", "floor\n"))
+        self.assertEqual(said[0], "The Factory Floor 0.26.0 is open in your browser.")
+        self.assertNotIn("terminal", " ".join(said))
+        said = self.answer_lines(self.for_skill("run", "  Studio \n"))
+        self.assertEqual(said[0], "Product Studio 0.26.0 is open in your browser.")
+        self.assertIn("/mach:studio status", said[-1], "/mach studio is the same as /mach-studio on its own")
+        self.assertEqual(len(self.world.opened), 2)
+
+    def test_link_and_stop_are_the_apps_own_forms(self):
+        self.world.install(app.STUDIO, "0.26.0")
+        pid = self.world.run_already(app.STUDIO, "0.26.0")
+        said = self.answer_lines(self.for_skill("studio", "link\n"))
+        self.assertEqual(said[-1], f"Open this link in a browser on this computer; it works once: {link(4100)}")
+        self.assertEqual(self.world.opened, [])
+        self.assertEqual(self.answer_lines(self.for_skill("studio", "stop\n")), ["Product Studio is stopped."])
+        self.assertEqual(self.world.signalled, [pid])
+        self.world.install(app.FLOOR, "0.26.0")
+        self.world.run_already(app.FLOOR, "0.26.0", port=4300)
+        self.assertIn(link(4300), self.answer_lines(self.for_skill("run", "floor link\n"))[-1])
+        self.assertEqual(self.answer_lines(self.for_skill("run", "floor stop\n")), ["The Factory Floor is stopped."])
+
+    def test_any_other_input_prints_nothing_and_does_nothing(self):
+        self.world.install(app.STUDIO, "0.26.0")
+        self.world.install(app.FLOOR, "0.26.0")
+        quiet = {
+            "studio": ["status", "where do things stand", "open the app", "floor", "studio", "link SLICE-004", "stop the interview",
+                       "add an epic", "SLICE-007", "\\!", "link\nstop", "x" * 5000],
+            "run": ["", "4", "status", "floor please", "floors", "floor link stop", "studio link", "pull", "LOCAL-004", "floor\nfloor",
+                    "--dry-run floor", "factory start"],
+        }
+        for skill, inputs in quiet.items():
+            for typed in inputs:
+                self.assertEqual(self.for_skill(skill, typed + "\n"), "", (skill, typed))
+        self.assertEqual((self.world.started, self.world.opened, self.world.installer_calls), ([], [], []))
+
+    def test_unknown_skills_bad_arguments_and_no_input_print_nothing(self):
+        class Terminal(io.StringIO):
+            def isatty(self):
+                return True
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            for argv in (["build"], [], ["studio", "--json"], ["studio", "--project"]):
+                self.assertEqual(app.main_for_skill(argv, stdin=io.StringIO("")), 0)
+            self.assertEqual(app.main_for_skill(["studio"], stdin=Terminal("")), 0)
+        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(self.world.started, [])
+
+    def test_nothing_opens_inside_a_supervised_factory_execution(self):
+        self.world.install(app.STUDIO, "0.26.0")
+        previous = os.environ.get(app.EXECUTION_ENV)
+        os.environ[app.EXECUTION_ENV] = "exec-1"
+        self.addCleanup(lambda: os.environ.pop(app.EXECUTION_ENV, None) if previous is None else os.environ.__setitem__(app.EXECUTION_ENV, previous))
+        self.assertEqual(self.for_skill("studio", "\n"), "")
+        self.assertEqual(self.for_skill("run", "floor\n"), "")
+        self.assertEqual((self.world.started, self.world.opened), ([], []))
+
+    def test_a_failure_is_said_between_the_lines_and_still_succeeds(self):
+        (self.project / ".factory/bin").rmdir()
+        (self.project / ".factory").rmdir()
+        said = self.answer_lines(self.for_skill("run", "floor\n"))
+        self.assertIn("has no .factory folder", said[0])
+        self.assertIn("then /mach:run floor again.", said[0])
+
+
+FENCED = re.compile(r"```!\s*\n?([\s\S]*?)\n?```")  # Claude Code's own pattern for a skill's fenced `!` command
+
+
+def skill_block(skill):
+    """The skill's first `!` command as written, and the text before it."""
+    text = (ROOT / "skills" / skill / "SKILL.md").read_text()
+    found = FENCED.search(text)
+    return found.group(1).strip(), text[:found.start()]
+
+
+def rendered(command, typed, skill_dir):
+    """The command as Claude Code renders it: the words put in place of $ARGUMENTS as they are, with no quoting. Only a
+    `!` beside a backtick, at the start of a line or after a blank is escaped (Claude Code's own rule for typed words,
+    so they cannot start a command of their own)."""
+    typed = re.sub(r"(^|\s)!", r"\1\\!", typed.replace("`!", "` !").replace("!`", "! `"), flags=re.M)
+    return command.replace("${CLAUDE_SKILL_DIR}", str(skill_dir)).replace("$ARGUMENTS", typed)
+
+
+HOSTILE = [
+    'what"; touch "$SENTINEL"; echo "',
+    "what's next'; touch \"$SENTINEL\"; echo '",
+    "$(touch \"$SENTINEL\")",
+    "`touch \"$SENTINEL\"`",
+    "${IFS}$(touch${IFS}$SENTINEL)",
+    "line one\n$(touch \"$SENTINEL\")\nline three",
+    "!MACH_TYPED_WORDS_END\ntouch \"$SENTINEL\"",
+    "  !MACH_TYPED_WORDS_END\ntouch \"$SENTINEL\"",
+    "EOF\ntouch \"$SENTINEL\"",
+    "\\\\ \\$HOME \\` \\\n",
+    "floor; touch \"$SENTINEL\"",
+    "|| touch \"$SENTINEL\" &",
+]
+
+
+class TheWordsNeverReachAShellTest(unittest.TestCase):
+    """The skills hand the person's words to MACH in a quoted here-document. Whatever they hold (quotes, $( ), backticks,
+    newlines, the here-document's own last line), the shell runs nothing of it, and MACH receives exactly what was typed."""
+
+    def run_rendered(self, command, workdir):
+        env = {**os.environ, "SENTINEL": str(workdir / "ran"), "MACH_APP_NO_START": "1"}
+        for shell in ("/bin/bash", "/bin/zsh", "/bin/sh"):
+            if Path(shell).exists():
+                yield shell, subprocess.run([shell, "-c", command], cwd=str(workdir), env=env, capture_output=True, text=True, timeout=60)
+
+    def test_hostile_words_run_nothing_and_print_nothing(self):
         for skill in ("studio", "run"):
-            text = (ROOT / "skills" / skill / "SKILL.md").read_text()
-            self.assertIn('${CLAUDE_SKILL_DIR}/../app/scripts/app.py', text, skill)
+            command, _ = skill_block(skill)
+            for typed in HOSTILE:
+                with tempfile.TemporaryDirectory() as tmp:
+                    workdir = Path(tmp).resolve()
+                    for shell, done in self.run_rendered(rendered(command, typed, ROOT / "skills" / skill), workdir):
+                        self.assertFalse((workdir / "ran").exists(), (skill, shell, typed))
+                        self.assertEqual((done.returncode, done.stdout), (0, ""), (skill, shell, typed, done.stderr))
+
+    def test_the_words_arrive_exactly(self):
+        command, _ = skill_block("studio")
+        head, _, rest = command.partition(" <<")
+        self.assertEqual(head, 'python3 "${CLAUDE_SKILL_DIR}/../run/scripts/app.py" for-skill studio')
+        probe = "python3 -c \"import sys; open(sys.argv[1], 'w').write(sys.stdin.read())\" received <<" + rest
+        for typed in HOSTILE[:6] + ["", "floor", "a \\ b $HOME `x` 'y' \"z\""]:
+            with tempfile.TemporaryDirectory() as tmp:
+                workdir = Path(tmp).resolve()
+                for shell, done in self.run_rendered(rendered(probe, typed, ROOT), workdir):
+                    self.assertEqual(done.returncode, 0, (shell, done.stderr))
+                    self.assertEqual((workdir / "received").read_text(), typed + "\n", (shell, typed))
+                    self.assertFalse((workdir / "ran").exists())
+
+    def test_the_exact_forms_reach_mach_through_the_shell(self):
+        """End to end through a real shell, in a folder that is no project: MACH answers, and nothing opens in a test."""
+        for skill, typed in (("studio", ""), ("run", "floor"), ("run", " studio ")):
+            command, _ = skill_block(skill)
+            with tempfile.TemporaryDirectory() as tmp:
+                workdir = Path(tmp).resolve()
+                for shell, done in self.run_rendered(rendered(command, typed, ROOT / "skills" / skill), workdir):
+                    lines = done.stdout.splitlines()
+                    self.assertEqual((done.returncode, lines[:1], lines[-1:]), (0, [app.ANSWER_BEGIN], [app.ANSWER_END]), (skill, shell, done.stderr))
+                    self.assertIn("has no .factory folder", lines[1])
+
+
+class SkillTest(unittest.TestCase):
+    def read(self, skill):
+        text = (ROOT / "skills" / skill / "SKILL.md").read_text()
+        return text.split("\n---", 1)[0], text
+
+    def test_each_skill_runs_mach_first_and_is_told_to_reply_with_its_answer_and_stop(self):
+        for skill, script in (("studio", "${CLAUDE_SKILL_DIR}/../run/scripts/app.py"), ("run", "${CLAUDE_SKILL_DIR}/scripts/app.py")):
+            head, text = self.read(skill)
+            self.assertNotIn("disable-model-invocation", head, "both skills are also loaded by Claude")
+            self.assertIn(f'  - Bash(python3 "{script}" *)\n', head)
+            command, before = skill_block(skill)
+            self.assertEqual(command, f'python3 "{script}" for-skill {skill} <<\'!MACH_TYPED_WORDS_END\'\n$ARGUMENTS\n!MACH_TYPED_WORDS_END')
+            self.assertNotIn("$ARGUMENTS", before, "the command comes before anything else")
+            first = text[text.index("!MACH_TYPED_WORDS_END\n```"):].split("\n\n", 2)[1]
+            for words in ("**First, MACH's answer.**", "MACH-ANSWER-BEGIN", "MACH-ANSWER-END", "Reply with exactly the sentences",
+                          "Add nothing, ask nothing, run nothing else, and stop", "If nothing from MACH stands there, read on."):
+                self.assertIn(words, first, (skill, words))
+            self.assertNotIn("—", first)
+            self.assertEqual(text.count("```!"), 1, skill)
+
+    def test_the_hints_name_the_opening_forms(self):
+        self.assertIn("nothing to open Product Studio in your browser | status", self.read("studio")[0])
+        self.assertIn("| studio | floor [link | stop] |", self.read("run")[0])
+
+    def test_studio_keeps_where_things_stand_in_words(self):
+        _, text = self.read("studio")
+        self.assertIn('`status`, "where do things stand" or "where are we": summarize the status', text)
+        self.assertIn("when loading this skill yourself, pass the person's request as its input", text)
+
+    def test_no_skill_names_the_old_command(self):
+        for path in sorted((ROOT / "skills").rglob("*")):
+            if path.is_file() and "__pycache__" not in path.parts:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+                for word in ("/mach-app", "/mach:app", "../app/"):
+                    self.assertNotIn(word, text, (path, word))
 
     def test_no_word_a_person_must_not_read(self):
         source = SCRIPT.read_text()
-        for sentence in re.findall(r'f?"([^"\n]*(?:MACH|Product Studio|Factory Floor)[^"\n]*)"', source):
+        for sentence in re.findall(r'f?"([^"\n]*(?:MACH|Product Studio|Factory Floor|terminal)[^"\n]*)"', source):
             self.assertNotRegex(sentence.lower(), r"\bengine\b|\bkind\b|\bscript\b", sentence)
         self.assertNotIn("—", source)
 

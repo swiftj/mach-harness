@@ -21,10 +21,10 @@ OBSERVER_WORDS = ("mach-observer", "apps/observer", "local/observer", "/api/v1/"
 
 class NothingInTheLineDependsOnTheObserverTest(unittest.TestCase):
     def test_no_station_script_agent_or_workflow_mentions_it(self):
-        """Only the run skill's own instructions name the observer (the step a person asks for), the app skill opens it
-        when a person types /mach-app floor (skills/app/, tests/test_mach_app.py), and the scaffold only git-ignores it.
+        """Only the run skill's own instructions name the observer (the step a person asks for), the run skill's app.py
+        opens it when a person types /mach floor (tests/test_mach_apps_open.py), and the scaffold only git-ignores it.
         No station script, agent, workflow or other skill text does."""
-        allowed = {RUN_SKILL, ROOT / "templates" / "gitignore-block", ROOT / "skills" / "app" / "scripts" / "app.py", ROOT / "skills" / "app" / "SKILL.md"}
+        allowed = {RUN_SKILL, ROOT / "templates" / "gitignore-block", ROOT / "skills" / "run" / "scripts" / "app.py"}
         found = []
         for top in ("skills", "agents", "workflows", "templates"):
             for path in sorted((ROOT / top).rglob("*")):
@@ -45,7 +45,7 @@ class NothingInTheLineDependsOnTheObserverTest(unittest.TestCase):
                 self.assertNotIn(word, source, f"{name}: {word}")
         head = RUN_SKILL.read_text(encoding="utf-8").split("\n---", 1)[0]
         hint = re.search(r'^argument-hint: "(.*)"$', head, re.MULTILINE).group(1)
-        self.assertIn("| studio | floor |", hint)
+        self.assertIn("| studio | floor [link | stop] |", hint)
         self.assertNotIn("observer", hint.lower())
         self.assertNotIn("factory-floor", hint.lower())
         text = RUN_SKILL.read_text(encoding="utf-8")
@@ -125,9 +125,10 @@ class TheSkillStepTest(unittest.TestCase):
         self.step = text[start:end if end != -1 else len(text)]
 
     def test_it_starts_the_observer_the_way_the_studio_is_started(self):
-        """One command does it, the same one /mach-app floor runs (skills/app/scripts/app.py, tests/test_mach_app.py)."""
-        self.assertIn('`python3 "${CLAUDE_SKILL_DIR}/../app/scripts/app.py" floor`', self.step)
-        self.assertIn("/mach-app floor", self.step)
+        """One command does it, the same one /mach floor runs (skills/run/scripts/app.py, tests/test_mach_apps_open.py)."""
+        self.assertIn('`python3 "${CLAUDE_SKILL_DIR}/scripts/app.py" floor`', self.step)
+        self.assertIn("/mach floor", self.step)
+        self.assertIn("/mach:run floor", self.step)
         for words in ("`FLOOR`", "`FLOOR link`", "`FLOOR stop`", "Add nothing to them and run nothing else"):
             self.assertIn(words, self.step, words)
 
@@ -140,7 +141,7 @@ class TheSkillStepTest(unittest.TestCase):
     def test_the_flags_it_starts_the_observer_with_exist(self):
         main = (OBSERVER / "cmd" / "mach-observer" / "main.go").read_text(encoding="utf-8")
         flags = set(re.findall(r'flags\.\w+\("([a-z-]+)"', main))
-        start = (ROOT / "skills" / "app" / "scripts" / "app.py").read_text(encoding="utf-8").split("\ndef start(", 1)[1].split("\ndef ", 1)[0]
+        start = (ROOT / "skills" / "run" / "scripts" / "app.py").read_text(encoding="utf-8").split("\ndef start(", 1)[1].split("\ndef ", 1)[0]
         floor = start.split("else:", 1)[1]
         used = {"project", *re.findall(r'"--([a-z][a-z-]*)"', floor)}
         self.assertEqual(used, {"project", "mach-run"})

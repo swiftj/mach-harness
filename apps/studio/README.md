@@ -63,7 +63,7 @@ a second session. A spent link opened in a browser without the session says to a
 
 Beside the link the host keeps `.factory/local/studio/host.json` (mode 0600): `{program, version, pid, port,
 project}`, the MACH release it was built for, its process and its port. It is written once the host
-listens and removed on exit. `/mach-app` (`skills/app/scripts/app.py`) reads it to reuse a host of the
+listens and removed on exit. `/mach-studio` (`skills/run/scripts/app.py`) reads it to reuse a host of the
 release installed in the project, or to stop an older one (after checking that process's command line).
 
 One host per project: the host holds an exclusive lock on `.factory/local/studio/lock` while it runs,

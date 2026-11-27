@@ -63,17 +63,11 @@ Type:
 /mach-studio
 ```
 
-MACH tells you where things stand and suggests a next step. It also starts Product Studio's visual app on your computer and gives you a link to it. From here on you can simply type what you want in plain words.
+Product Studio opens in your browser, on your own computer, always the release of MACH installed in this project. A link works once. For another browser, or if you closed the page, type `/mach-studio link` for a new one. `/mach-studio stop` stops the app.
 
 > If that command is not found, your engineer installed MACH as a plugin. Type `/mach:studio` instead. Everything else is the same.
 
-**Prefer a screen to a conversation?** Click the link, or paste it into a browser on your computer. Or type:
-
-```
-/mach-app
-```
-
-Product Studio opens in your browser, on your own computer, always the release of MACH installed in this project. With the plugin, type `/mach:app`. A link works once. For another browser, or if you closed the page, type `/mach-app link` for a new one. `/mach-app stop` stops the app. The app and the conversation work on the same drafts, so switch between them whenever you like.
+**Prefer a conversation to a screen?** Type `/mach-studio status`, or say "where do things stand". MACH tells you where things stand and suggests a next step. From here on you can simply type what you want in plain words after `/mach-studio`. The app and the conversation work on the same drafts, so switch between them whenever you like.
 
 ### Step 5. Tell MACH about the product
 
@@ -239,11 +233,11 @@ The slice is now a GitHub issue under its epic's issue, with your approval recor
 
 ### Step 5. Do the next slice
 
-Say "continue SLICE-002", or just `/mach-studio` to see what is next.
+Say "continue SLICE-002", or `/mach-studio status` to see what is next.
 
 ## Part 4. While the builders work
 
-Start each session with `/mach-studio`. It refreshes and tells you where every slice stands: ready, being built, a question from the builders, or shipped.
+Start each session with `/mach-studio` for the app, or `/mach-studio status` in the conversation. It refreshes and tells you where every slice stands: ready, being built, a question from the builders, or shipped.
 
 | What you see | What to do |
 |---|---|
@@ -269,7 +263,7 @@ Each of these is optional. Say the words on the left when you need it.
 | `export for Jira` | Write one file your Jira administrator can import, with epics and their slices as stories. |
 | `move this project to another repository` | One file that carries the whole project to another repository, and brings it in there as it was. Every slice arrives as a draft; those that were ready there can be marked ready again in one step, on your word. See the Product Manager Guide. |
 | `how does this epic work today?` | The rules that have shipped. Choose one and say "change this" to start an idea from it. |
-| `/mach-app` | The same workspace in your browser. |
+| `/mach-studio` | The same workspace in your browser. |
 
 If your organisation keeps policies in the project (brand, security, privacy, accessibility), MACH reads them during the interview and follows them in what it recommends. If a slice cannot meet one, MACH tells you which owner must answer before the slice can be marked ready.
 
@@ -314,7 +308,7 @@ Either way:
 
 | What happened | What to do |
 |---|---|
-| You do not know what to do next | Type `/mach-studio`. It always suggests a next step. |
+| You do not know what to do next | Type `/mach-studio status`. It always suggests a next step. |
 | You closed everything mid-interview | Open the project again and say "continue SLICE-004". Your progress was saved. |
 | "The shared repository could not be reached" | You are offline. Your drafts are unchanged. Reconnect and try again. |
 | "GitHub not checked" in the app's top bar | MACH could not check GitHub, even after trying again. Nothing of yours is lost. Open it to see why and press **Check GitHub again**; the app also checks again by itself every minute or so. |
@@ -328,7 +322,7 @@ Either way:
 1. Install Claude Code and sign in.
 2. Get the project folder, with MACH installed.
 3. `/mach doctor`
-4. `/mach-studio`
+4. `/mach-studio` (the app), or `/mach-studio status` (the conversation)
 5. Describe the project: name, vision, outcomes.
 6. **With a PRD:** "start from my PRD at ...", settle the map, say yes to make the drafts. **With an idea:** "shape an idea", or add an epic and start a slice.
 7. Answer the interview: `yes`, your own answer, `I don't know`, `you decide`.
