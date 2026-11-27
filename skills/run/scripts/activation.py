@@ -287,9 +287,13 @@ def enable(ctx: Context, args: Any) -> Dict[str, Any]:
                                              ("max_budget_usd_per_run", args.budget_per_run), ("max_budget_usd_per_day", args.budget_per_day),
                                              ("max_attempts", args.max_attempts), ("poll_seconds", args.poll_seconds)) if value is not None}
     base = previous or {}
-    # A person's start runs work: without --autonomy it is supervised, even where this machine was set to observe before.
-    lifted = OBSERVE_LIFTED if not args.autonomy and base.get("autonomy") == "observe" else None
-    request = {"autonomy": args.autonomy or "supervised",
+    # A person's start runs work: without --autonomy it is supervised, even where this machine was set to observe before, when that
+    # setting is all that holds it (the same check as pull's hand-over). Where the project keeps the Factory to observing, this
+    # machine's own setting is left as it was, and the answer names the project's setting.
+    machine_only = bool(previous) and held_only_by_machine_observe(raw, ctx.config)
+    lifted = OBSERVE_LIFTED if not args.autonomy and base.get("autonomy") == "observe" and machine_only else None
+    keep_observe = not args.autonomy and base.get("autonomy") == "observe" and not machine_only
+    request = {"autonomy": args.autonomy or ("observe" if keep_observe else "supervised"),
                "limits": {**(base.get("limits") or {}), **asked},
                "allow_merge": False if args.no_merge else base.get("allow_merge", True),
                "auto_sync": bool(args.auto_sync or base.get("auto_sync")), "persistent": bool(args.persistent or base.get("persistent")),
@@ -319,11 +323,14 @@ def enable(ctx: Context, args: Any) -> Dict[str, Any]:
             policy_module.save(ctx.root, pol)
             agent = {"error": str(exc)}
     started = start_background(ctx)  # factory start (= enable): a supervisor that outlives the session
+    after = policy_module.read(ctx.root)
+    held = why_not(after, policy_module.effective(after, ctx.config))  # the project's own setting, said with where to change it
     return {"ready": True, "enabled": True, "updated": previous is not None, "factory": pol["autonomy"], "policy": describe(pol), "summary": summary, "checks": results,
             "git_hooks": hooks, "persistent_service": agent,
             "supervisor": started["supervisor"], "pid": started.get("pid"), "why_not": started.get("why_not"),
             **({"already_running": started["already_running"]} if started.get("already_running") else {}),
-            "in_words": " ".join(part for part in (lifted, started.get("in_words") or started.get("why_not")) if part),
+            "in_words": " ".join(part for part in (lifted, held or started.get("in_words") or started.get("why_not")) if part),
+            **({"held_by": held} if held else {}),
             **({"observe_lifted": lifted} if lifted else {}),
             "next": ("The Factory is on for this machine only, and runs in the background until stopped. /mach pull hands it ready work; "
                      "/mach factory stop stops it."),

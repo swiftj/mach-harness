@@ -434,7 +434,9 @@ def no_cell(root: Path, ticket_id: str, next_info: Dict[str, Any]) -> Tuple[Dict
     if record:
         kept = record.get("archive_kept") if isinstance(record.get("archive_kept"), dict) else {}
         evidence = "The evidence files were not kept after cleanup (cleanup.archive)." if "archive" in record else None
-        if evidence and isinstance(kept.get("reason"), str):
+        if record.get("outcome") == "abandoned" and kept.get("chosen_by") == "abandon":
+            evidence = "The ticket was abandoned: its work was deleted from this machine, as asked."
+        elif evidence and isinstance(kept.get("reason"), str):
             evidence += " " + clean(kept["reason"], 300)
         return {"headline_code": "finished", "archive": None, "run_record": facts, **({"evidence": evidence} if evidence else {})}, 0
     known = (factory / "tickets" / f"{ticket_id}.md").is_file() or (factory / "inbox" / f"{ticket_id}.json").is_file()
@@ -469,7 +471,7 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
         return base, code
 
     stage = cell.get("stage") if isinstance(cell.get("stage"), str) else None
-    limit = max_rounds(config, cell)
+    limit = max_rounds(config, cellroot)
     base["max_rounds"] = limit
     build = load_json(cellroot / "build.json", {}) or {}
     report = load_json(cellroot / "build-report.json", {}) or {}
@@ -481,7 +483,7 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
     seat_veto_on = review_settings.get("security_veto") is not False
 
     loop = build.get("loop") if isinstance(build.get("loop"), int) and not isinstance(build.get("loop"), bool) else 0
-    used = max(loop + 1 - rounds_base(cell), 0) if (cellroot / "build.json").is_file() else 0  # rounds a person's start set aside do not count
+    used = max(loop + 1 - rounds_base(cellroot), 0) if (cellroot / "build.json").is_file() else 0  # rounds a person's start set aside do not count
     if stage == "blocked":
         used = max(used, limit)
     base.update({"stage": stage, "risk": clean(cell.get("risk"), 20), "rounds_used": used, "rounds_left": max(limit - used, 0)})
@@ -581,8 +583,8 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
     carried = [{"n": item.get("n") if isinstance(item.get("n"), int) else None, "by": clean(item.get("by"), 80), "at": clean(item.get("at"), 40),
                 "round": item.get("round") if isinstance(item.get("round"), int) else None,
                 "max_rounds": item.get("max_rounds") if isinstance(item.get("max_rounds"), int) else None,
-                "guidance_file": clean(item.get("guidance"), 60), "source_file": "cell.json"}
-               for item in cell.get("carried_on") or [] if isinstance(item, dict)] if isinstance(cell.get("carried_on"), list) else []
+                "why": clean(item.get("why"), 20), "guidance_file": clean(item.get("guidance"), 60), "source_file": "rounds.json"}
+               for item in (rounds_helper().carried_on(cellroot) if rounds_helper() is not None else [])]
     if carried:  # a person carried this ticket on after it stopped: who, when, and the round it was given
         base["carried_on"] = carried[-10:]
     early = started_before(cell)

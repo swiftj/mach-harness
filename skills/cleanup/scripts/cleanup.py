@@ -1069,6 +1069,8 @@ def deleting(cell: Cell, plan: Dict[str, Any], decision: Dict[str, Any]) -> Dict
     if lane_commits:
         gone.append(f"{lane_commits} commit{'s' if lane_commits != 1 else ''} only its lanes hold")
     refs = len(plan["replan_refs"])
+    earlier = earlier_archives(cell.project, cell.ticket_id)
+    would["delete_archives"] = earlier
     plan.update({
         "raised_to_person": raised_to_person(cell, "abandoned"),
         "archive_decision": dict(decision, kept=False, chosen_by="abandon", reason=(
@@ -1079,10 +1081,22 @@ def deleting(cell: Cell, plan: Dict[str, Any], decision: Dict[str, Any]) -> Dict
         "in_words": (f"Abandoning {cell.ticket_id} deletes its work from this machine for good: {', '.join(gone[:-1]) + ' and ' + gone[-1]} go, with its cell, "
                      f"its worktrees" + (f", its local branch {plan['branch']}" if would.get("delete_branch") else "")
                      + (f" and the {refs} ref{'s' if refs != 1 else ''} MACH kept for it" if refs else "")
+                     + (f", and its earlier archive{'s' if len(earlier) != 1 else ''} ({', '.join(earlier)})" if earlier else "")
                      + ". Nothing is archived or kept. Remote branches and GitHub are not touched. "
                      "To keep an archive instead, a person asks for it with --keep-archive."),
     })
     return plan
+
+
+def earlier_archives(project: Path, ticket_id: str) -> List[str]:
+    """The archives an earlier cleanup of this ticket kept (.factory/archive/<ticket>.tar.gz and <ticket>-<n>.tar.gz), never a link."""
+    folder = project / ".factory" / "archive"
+    found = []
+    for path in sorted(folder.glob(f"{ticket_id}*.tar.gz")) if folder.is_dir() else []:
+        rest = path.name[len(ticket_id):-len(".tar.gz")]
+        if (rest == "" or re.fullmatch(r"-\d+", rest)) and path.is_file() and not path.is_symlink():
+            found.append(relative(project, path))
+    return found
 
 
 def survey_gates(cell: Cell, abandon: Optional[str], merged_as: Optional[str] = None) -> Dict[str, Any]:
@@ -1451,6 +1465,11 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         raise CleanupError(f"Could not remove {root}: {exc}. {kept}", code="cell-folder-not-removed")
     removed.append(relative(project, root))
     lanes_done = finish_lanes(cell, lanes) if lanes is not None else None
+    for name in plan["would"].get("delete_archives") or []:  # an abandoned ticket's earlier archives go with the rest of its work
+        path = project / name
+        if path.is_file() and not path.is_symlink() and path.resolve().parent == (project / ".factory" / "archive").resolve():
+            path.unlink()
+            removed.append(name)
 
     branch_deleted, note = False, None
     if plan["would"]["delete_branch"]:
@@ -1728,7 +1747,7 @@ def build_parser() -> argparse.ArgumentParser:
                              ("run", cmd_run, "archive the cell, then remove its worktree, folder and local branch")):
         p = sub.add_parser(name, help=text)
         p.add_argument("ticket_id")
-        p.add_argument("--abandon", metavar="WHY", help="give up an unmerged ticket: its work is deleted from this machine for good (with --keep-archive it is archived instead)")
+        p.add_argument("--abandon", metavar="WHY", help="abandon an unmerged ticket, on a person's explicit request: its work is deleted from this machine for good (with --keep-archive it is archived instead)")
         p.add_argument("--merged-as", metavar="COMMIT", help="the commit on the default branch that a squash or rebase merge of this ticket created")
         choice = p.add_mutually_exclusive_group()
         choice.add_argument("--keep-archive", dest="archive_flag", action="store_const", const="keep",

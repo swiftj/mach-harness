@@ -138,7 +138,7 @@ class ApprovalAndMergeTest(Base):
         self.write(TICKET, "review/round-3/findings.md", "# Findings\n")
         self.write(TICKET, "review/decision.json", {"outcome": "AWAITING_HUMAN", "round": 3,
                                                     "findings": str(self.project / ".factory/worktrees" / TICKET / "review/round-3/findings.md")})
-        self.assertIn("as this is the ticket's last round, the ticket then stops, and carrying it on gives the builder one more round",
+        self.assertIn("as this is the ticket's last round the builder also gets one more round, with the reason as the finding and the guidance",
                       self.one()["options"][1]["does"])
 
     def test_approve_is_not_offered_without_the_findings_file(self):

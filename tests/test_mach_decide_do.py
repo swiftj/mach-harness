@@ -251,6 +251,14 @@ class StationTest(Base):
         self.assertIn("It was its last round, so it stops for a person: /mach decide do LOCAL-001 carry-on gives the builder one more round", result["now"])
         self.assertEqual(result["ticket"], {"updated": True})
 
+    def test_send_back_in_the_last_round_carries_the_ticket_on_with_the_reason(self):
+        """Review finding 6: a person's send-back never stops the ticket; the review station grants the round in the same step."""
+        self.awaiting(3)
+        self.station.answers[("review", "send-back")] = (0, json.dumps({"outcome": "REJECTED", "carried_on": {"round": 4, "max_rounds": 4}}), "")
+        result = self.do("send-back", reason="Still wrong after three rounds.")
+        self.assertEqual((result["supervisor"], self.carried), ("woken", [True]))
+        self.assertIn("It was its last round, so the builder gets one more, round 4 of 4, with that reason as the finding.", result["now"])
+
     def test_a_station_refusal_is_said_in_its_own_words_and_nothing_else_happens(self):
         self.awaiting()
         self.park()

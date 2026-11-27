@@ -327,7 +327,7 @@ def update_ticket(station: Callable[[str, Sequence[str]], Tuple[int, str, str]],
     if code == 0:
         return {"updated": True}
     return {"updated": False, "note": refusal_text(code, out, err),
-            "then": f"Update the ticket by hand: ticket.py update {ticket} " + " ".join(argv[:2]) + "."}
+            "then": f"Update the ticket with: ticket.py update {ticket} " + " ".join(argv[:2]) + "."}
 
 
 def unpark(root: Path, ticket: str, line: Callable[[], Any], announce: bool, run_skill: str = "/mach") -> Tuple[bool, Optional[str]]:
@@ -642,6 +642,11 @@ def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[st
             result["ticket"] = update_ticket(station, ticket, ["--state=blocked", "--label=blocked-requires-sme"])
             done = (f"{ticket} is sent back with {name}'s reason. It was its last round, so it stops for a person: {run_skill} decide do {ticket} "
                     "carry-on gives the builder one more round, with that reason as the finding.")
+        elif isinstance((result["station"]["answer"] or {}).get("carried_on"), dict):
+            # The last round: a person's send-back never stops the ticket. Their reason is the guidance for one more round.
+            more = result["station"]["answer"]["carried_on"]
+            done, what = (f"{ticket} is sent back with {name}'s reason. It was its last round, so the builder gets one more, round {more.get('round')} "
+                          f"of {more.get('max_rounds')}, with that reason as the finding.", "the builder revises it")
         else:
             done, what = f"{ticket} is sent back with {name}'s reason, which uses one of its rounds.", "the builder revises it"
     elif key == "merge":

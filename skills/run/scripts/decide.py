@@ -74,6 +74,7 @@ DATA_FIELDS = ("situation.title", "situation.reason", "situation.causes[].detail
                "situation.parked.reason", "situation.approval_reasons[]", "situation.pull_request",
                "situation.adr.title", "situation.adr.reason", "situation.adr_problems[]", "situation.missing_topics[].topic", "situation.proposed[].title", "situation.question",
                "situation.conflict.files[]", "situation.concerns[].statement", "situation.concerns[].why", "situation.concerns[].owner",
+               "situation.stopped.failed[].id", "situation.stopped.failed[].text", "situation.stopped.failed[].note", "guidance",
                "questions[].text", "questions[].follow_up")
 # A stop for an architecture decision, by the routing sheet's `needs`, and the waiting state it is walked as.
 ADR_STATES = {"adr-decision": "adr-conflict", "adr-acceptance": "adr-acceptance", "adr-fix": "adr-fix", "adr-baseline": "adr-baseline"}
@@ -563,10 +564,10 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
                                   f"approve {ticket}"))
         else:
             facts["note"] = "This round's findings file is missing, so approval is not offered: a person sees the findings before approving."
-        last = type(decision.get("round")) is int and decision["round"] - explain.rounds_base(cell) >= explain.max_rounds(config, cell)
+        last = type(decision.get("round")) is int and decision["round"] - explain.rounds_base(cellroot) >= explain.max_rounds(config, cellroot)
         options.append(option("send-back", "Send it back",
-                              ("The review station records the person's reason; as this is the ticket's last round, the ticket then stops, and carrying "
-                               "it on gives the builder one more round with the reason as the finding."
+                              ("The review station records the person's reason, and as this is the ticket's last round the builder also gets one more "
+                               "round, with the reason as the finding and the guidance."
                                if last else "The review station records the person's reason as the finding to answer, and the builder revises; it uses one of the ticket's rounds."),
                               f'send-back {ticket} "<why>"', needs_reason=True))
         options.append(abandon(ticket))
