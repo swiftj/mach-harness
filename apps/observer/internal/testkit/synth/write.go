@@ -161,6 +161,9 @@ func (g *gen) write() error {
 	if err := g.writeM15(); err != nil {
 		return err
 	}
+	if err := g.writeStopped(); err != nil {
+		return err
+	}
 	if w.an != nil {
 		if err := g.writeRuns(); err != nil {
 			return err

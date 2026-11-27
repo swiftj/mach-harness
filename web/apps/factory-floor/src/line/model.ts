@@ -183,6 +183,20 @@ export interface LineRow {
 const ROUND_WORDS = ["", "once", "twice"];
 export const timesWords = (n: number): string => ROUND_WORDS[n] ?? `${n} times`;
 
+/** "Sent back once", "Sent back twice", "Sent back 3 times": under a stopped ticket's marker, counted across every set of rounds. */
+export function sentBackTimesWords(times: number): string {
+  return `Sent back ${timesWords(times)}`;
+}
+
+/**
+ * Whether a row draws its send-back arc: only where both ends are drawn, the marker at the station the
+ * work went back to and the sending station's node. A stopped ticket draws none: the words under its
+ * marker say how often it was sent back, and its panel lists every round.
+ */
+export function drawsSentBack(row: Pick<LineRow, "state" | "sentBack" | "column" | "beforeMerge">): boolean {
+  return row.sentBack !== null && row.state !== "stopped" && !row.beforeMerge && row.sentBack.to === row.column && row.sentBack.from !== row.column;
+}
+
 function visitMs(v: StationVisit, now: number): StationTime["ms"] {
   if (v.leftAt === null) return Math.max(0, now - v.enteredAt);
   if (v.durationMs !== null) return v.durationMs;
@@ -248,9 +262,15 @@ function sentBackOf(cell: CellState): LineRow["sentBack"] {
   let builds = 0;
   let from: number | null = null;
   let last: number | null = null;
+  // A person's carry-on enters the build station again without being sent back again: not counted.
+  const carried = new Set(carryOns(cell).map((c) => c.at));
   for (const v of cell.visits) {
     const c = columnOf(v.station);
     if (c === null) continue;
+    if (c === BUILD && carried.has(v.enteredAt)) {
+      last = c;
+      continue;
+    }
     if (c === BUILD) {
       builds += 1;
       if (builds > 1 && last !== null && last > BUILD) from = last;

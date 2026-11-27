@@ -13,7 +13,7 @@ import { useCallback, type KeyboardEvent } from "react";
 import { cn } from "@mach/ui";
 import { FreeText, FreeTextLabel } from "../shell/inspector/FreeText";
 import { duration } from "../shell/time";
-import { LINE_STATIONS, STATE_WORDS, timesWords, type LineRow, type StationStat } from "./model";
+import { LINE_STATIONS, STATE_WORDS, drawsSentBack, sentBackTimesWords, timesWords, type LineRow, type StationStat } from "./model";
 import { Marker, PassedNode } from "./Marks";
 import { modelWords } from "./words";
 import { EpicLine } from "./Epic";
@@ -33,11 +33,6 @@ export function markerLabel(row: LineRow): string {
   if (row.state === "working") return row.detail ?? STATE_WORDS.working;
   if (row.state === "person") return row.beforeMerge ? "Your approval" : STATE_WORDS.person;
   return STATE_WORDS[row.state];
-}
-
-/** "Sent back once", "Sent back twice", "Sent back 3 times": under a stopped ticket's marker. */
-export function sentBackTimesWords(times: number): string {
-  return `Sent back ${timesWords(times)}`;
 }
 
 /** The line under a marker: how long, in plain words, and what it is waiting on. */
@@ -83,15 +78,6 @@ function StationHeading({ column, stat, selected, onPick }: { column: number; st
       <span className="w-full truncate text-caption text-ink-muted">{stat?.typicalMs != null ? `typical ${duration(stat.typicalMs)}` : "time not recorded yet"}</span>
     </button>
   );
-}
-
-/**
- * Whether a row draws its send-back arc: only where both ends are drawn, the marker at the station the
- * work went back to and the sending station's node. A stopped ticket draws none: the words under its
- * marker say how often it was sent back, and its panel lists every round.
- */
-export function drawsSentBack(row: Pick<LineRow, "state" | "sentBack" | "column" | "beforeMerge">): boolean {
-  return row.sentBack !== null && row.state !== "stopped" && !row.beforeMerge && row.sentBack.to === row.column && row.sentBack.from !== row.column;
 }
 
 function Lane({ row, now, onStopped }: { row: LineRow; now: number; onStopped?: (row: LineRow) => void }) {

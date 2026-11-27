@@ -158,6 +158,14 @@ func shapeNeeds(raw []byte, root string) (map[string]any, map[string]map[string]
 				}
 			}
 		}
+		// A stop's findings file is a project path MACH names, as show_first's are.
+		if situation, ok := item["situation"].(map[string]any); ok {
+			if stopped, ok := situation["stopped"].(map[string]any); ok {
+				if p, ok := stopped["findings_file"].(string); ok {
+					safe = append(safe, p)
+				}
+			}
+		}
 		opts, _ := item["options"].([]any)
 		for _, o := range opts {
 			opt, _ := o.(map[string]any)
@@ -167,6 +175,14 @@ func shapeNeeds(raw []byte, root string) (map[string]any, map[string]map[string]
 					offered[id] = map[string]bool{}
 				}
 				offered[id][key] = true
+				// The optional inputs it takes (`takes`), so only those are passed on with it.
+				if takes, ok := opt["takes"].([]any); ok {
+					for _, t := range takes {
+						if name, ok := t.(string); ok && act.Takes[name] {
+							offered[id][act.TakesKey(key, name)] = true
+						}
+					}
+				}
 			}
 		}
 	}
@@ -366,6 +382,8 @@ var needsFreeText = []map[string]any{
 	{"route": "/api/v1/needs", "path": "tickets[].situation.adr", "from": "the ADR and the planner's conflict record", "max": 300},
 	{"route": "/api/v1/needs", "path": "tickets[].situation.proposed[].title", "from": "cell.json adrs.proposed", "max": 200},
 	{"route": "/api/v1/needs", "path": "tickets[].situation.concerns[]", "from": "the spec's policy concerns", "max": 300},
+	{"route": "/api/v1/needs", "path": "tickets[].situation.stopped.failed[].text", "from": "the spec's item the verifier or a reviewer named", "max": 300},
+	{"route": "/api/v1/needs", "path": "tickets[].situation.stopped.failed[].note", "from": "the verifier's or the reviewer's note", "max": 600},
 	{"route": "/api/v1/needs", "path": "tickets[].questions[].text", "from": "the spec's Open questions", "max": 300},
 	{"route": "/api/v1/needs", "path": "tickets[].questions[].follow_up", "from": "the spec's Open questions", "max": 300},
 	{"route": "/api/v1/needs", "path": "tickets[] (every path the reply's data_fields lists)", "from": "decide.py DATA_FIELDS", "max": 300},
