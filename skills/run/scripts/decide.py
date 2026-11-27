@@ -88,8 +88,8 @@ SUMMARY = {
     "policy-owner": "The spec flags a policy statement this slice cannot meet; it waits for the policy's owner, or for the spec to change so it is met.",
     "product-answer": "The contract engineer found a defect in the slice's spec; the question waits for the product manager on the slice's issue.",
     "build-gate": "The build stopped at a gate.",
-    "escalated": "The ticket failed its last judging round and was escalated: the line will not run it again.",
-    "stuck": "The cell is in a state the line cannot handle.",
+    "escalated": "The ticket failed its last round and stopped for a person. A person can carry it on with a fix: one more round for the builder, on the same branch.",
+    "stuck": "The cell is in a stage the line does not know, so it stopped for a person, who can carry it on.",
     "bronze": "The repository's readiness tier is Bronze, so only hardening tickets may be built.",
     "parked": "The Factory supervisor took this ticket out of automatic execution until a person says to carry on.",
     "worker-in-cell": "Another worker was handed this ticket's step and may still be at work in the cell; nothing else waits on a person.",
@@ -263,12 +263,14 @@ def option(key: str, label: str, does: str, route: Optional[str], needs_reason: 
 
 # What `run.py decide do` (act.py) carries out by itself, per option key. The rest need an agent or a conversation:
 # `decide do` answers them with the command to run, and changes nothing.
-CARRIED_OUT = ("approve", "send-back", "merge", "abandon", "replan", "retry", "run", "revise", "answers", "wait", "take-over")
+CARRIED_OUT = ("approve", "send-back", "merge", "abandon", "replan", "retry", "run", "revise", "answers", "wait", "take-over", "carry-on")
 # Decisions a person confirms first: they cannot be undone, or they stop another worker.
 CONFIRM_FIRST = ("approve", "merge", "abandon", "take-over")
 # Decisions that hand the ticket to the Factory at the stage it is at. While another worker's claim on that stage is fresh,
 # the Factory would be held by it, so act.py takes the step over as it records the decision: the person asked for it to run.
-TAKES_OVER = ("retry", "run", "revise", "set-test-command")
+TAKES_OVER = ("retry", "run", "revise", "set-test-command", "carry-on")
+# Optional free text an option takes besides its required `needs`: "guidance", what the builder should do differently.
+TAKES = {"carry-on": ["guidance"]}
 
 
 def mark(options: List[Dict[str, Any]], state: str, claimed: bool = False) -> None:
@@ -288,7 +290,7 @@ def mark(options: List[Dict[str, Any]], state: str, claimed: bool = False) -> No
             can = False
         needs = ["test_cmd"] if key == "set-test-command" else ["answers"] if key == "answers" else []
         takes = key == "take-over" or (claimed and can and key in TAKES_OVER)
-        item.update({"do": can, "needs": needs, "confirm": key in CONFIRM_FIRST, "takes_over": takes})
+        item.update({"do": can, "needs": needs, "takes": list(TAKES.get(key, [])), "confirm": key in CONFIRM_FIRST, "takes_over": takes})
 
 
 OPEN_QUESTIONS_RE = re.compile(r"^##\s+Open questions\s*$", re.IGNORECASE)
@@ -338,10 +340,74 @@ def answers_pending(cellroot: Path, cell: Dict[str, Any]) -> bool:
 
 
 def abandon(ticket: str, extra: str = "") -> Dict[str, Any]:
+    """Abandon: never the only option, never first and never recommended. Its `does` gets what is deleted (work_at_stake) in record()."""
     return option("abandon", "Abandon the ticket",
-                  "The cleanup station removes the cell, keeping its unmerged commits (in its archive, or as its branch where no archive is kept) and "
-                  "closes the ticket as abandoned" + extra + ".",
+                  "The cleanup station deletes the ticket's work from this machine for good: its cell, worktrees, local branch and the refs MACH "
+                  "kept for it, and closes the ticket as abandoned" + extra + ".",
                   f'abandon {ticket} "<why>"', needs_reason=True)
+
+
+def git_out(cwd: Path, *args: str) -> Optional[str]:
+    import subprocess
+    try:
+        done = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, errors="replace", stdin=subprocess.DEVNULL, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if done.returncode == 0 else None
+
+
+def work_at_stake(root: Path, cellroot: Path, cell: Dict[str, Any]) -> Optional[Dict[str, int]]:
+    """What abandoning deletes that is nowhere else: the branch's commits the main checkout's HEAD does not have, and the uncommitted
+    files in the cell's checkout. Read-only git queries; None when they cannot be counted."""
+    branch = cell.get("branch") if isinstance(cell.get("branch"), str) else None
+    commits = 0
+    if branch and cell.get("isolation") == "worktree":
+        counted = git_out(root, "rev-list", "--count", f"refs/heads/{branch}", "^HEAD")
+        if counted is None or not counted.strip().isdigit():
+            return None
+        commits = int(counted.strip())
+    files = 0
+    repo = cellroot / "repo"
+    if cell.get("isolation") == "worktree" and repo.is_dir():
+        listed = git_out(repo, "status", "--porcelain", "--untracked-files=all")
+        files = len([line for line in (listed or "").splitlines() if line.strip()])
+    return {"unmerged_commits": commits, "uncommitted_files": files}
+
+
+def stake_words(stake: Optional[Dict[str, int]]) -> str:
+    if stake is None:
+        return " Nothing is archived or kept."
+    commits, files = stake["unmerged_commits"], stake["uncommitted_files"]
+    return (f" That deletes {commits} unmerged commit{'s' if commits != 1 else ''} and {files} uncommitted file{'s' if files != 1 else ''}; "
+            "nothing is archived or kept.")
+
+
+def carry_on_option(ticket: str) -> Dict[str, Any]:
+    item = option("carry-on", "Carry on with a fix",
+                  "The builder gets one more round on the same branch, with the last findings and what the person says to do; nothing already "
+                  "built is redone, and verification and review then run again as normal.", f'carry-on {ticket} "<guidance>"')
+    item["recommended"] = True
+    return item
+
+
+def stopped_facts(root: Path, cellroot: Path, report: Dict[str, Any]) -> Dict[str, Any]:
+    """What must be fixed, for a screen: which station failed last, the rounds, the items that failed with their text, and the
+    findings file. Every text is the stations' data, already bounded by explain.clean."""
+    failure = report.get("last_failure") if isinstance(report.get("last_failure"), dict) else {}
+    failed = []
+    for item in report.get("causes") or []:
+        if not isinstance(item, dict) or item.get("kind") in ("blocked", "build_gate", "waiting_for_person"):
+            continue
+        req = item.get("requirement") if isinstance(item.get("requirement"), dict) else {}
+        ident = item.get("id") or item.get("ref")
+        if req.get("text"):
+            text, note = req.get("text"), item.get("detail")
+        else:
+            text, note = item.get("detail"), item.get("rule")
+        failed.append({"id": explain.clean(ident, 80), "text": explain.clean(text), "note": explain.clean(note)})
+    findings = report.get("findings_file")
+    return {"station": failure.get("station"), "round": {"used": report.get("rounds_used"), "max": report.get("max_rounds")},
+            "failed": failed[:MAX_CAUSES], "findings_file": relative(root, cellroot / findings) if isinstance(findings, str) and findings else None}
 
 
 def run_again(ticket: str, does: str, label: str = "Run it again") -> Dict[str, Any]:
@@ -515,13 +581,14 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
             options.append(option("approve", "Approve the change",
                                   "The review station records the person's approval of this round, and the line carries the ticket on to its next step.",
                                   f"approve {ticket}"))
-            last = type(decision.get("round")) is int and decision["round"] >= explain.max_rounds(config)
-            options.append(option("send-back", "Send it back",
-                                  ("The review station records the person's reason and, because this is the ticket's last round, escalates it instead of building again."
-                                   if last else "The review station records the person's reason as the finding to answer, and the builder revises; it uses one of the ticket's rounds."),
-                                  f'send-back {ticket} "<why>"', needs_reason=True))
         else:
             facts["note"] = "This round's findings file is missing, so approval is not offered: a person sees the findings before approving."
+        last = type(decision.get("round")) is int and decision["round"] - explain.rounds_base(cell) >= explain.max_rounds(config, cell)
+        options.append(option("send-back", "Send it back",
+                              ("The review station records the person's reason. This is the ticket's last round, so it stops after that; carrying it on "
+                               "then gives the builder one more round with the reason as the finding."
+                               if last else "The review station records the person's reason as the finding to answer, and the builder revises; it uses one of the ticket's rounds."),
+                              f'send-back {ticket} "<why>"', needs_reason=True))
         options.append(abandon(ticket))
     elif state == "merge":
         options.append(option("merge", "Merge it now",
@@ -598,6 +665,15 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
     elif state in ("escalated", "stuck"):
         if report.get("findings_file"):
             show_first.append(relative(root, cellroot / report["findings_file"]))
+        facts["stopped"] = stopped_facts(root, cellroot, report)
+        build = load_json(cellroot / "build.json", {}) or {}
+        if isinstance(build, dict) and build.get("tasks"):
+            options.append(carry_on_option(ticket))
+        elif replan_allowed(cellroot, stage):
+            options.append(replan(ticket))
+        else:
+            options.append(run_again(ticket, "The line reads the cell's records again in this conversation and carries it on from where they say it is.",
+                                     "Look at it again"))
         veto = exception_offer(root, ticket) if state == "escalated" else None
         if veto and veto.get("mode") == "new":
             facts["vetoing"] = list(veto["open"])
@@ -618,6 +694,7 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
         facts["conflict"] = {"files": [explain.clean(name, 200) for name in conflict.get("files") or [] if isinstance(name, str)][:10],
                              "folder": explain.clean(conflict.get("folder"), 300), "during": explain.clean(conflict.get("during"), 20)}
         options.append(run_again(ticket, "After a person merges the main branch into the ticket's branch in that folder, resolves the conflict and commits it, "
+
                                  "the line carries the ticket on from where it stopped, under the same gates.", "Resolve it, then carry on"))
         if replan_allowed(cellroot, stage):
             options.append(replan(ticket))
@@ -627,6 +704,14 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
         facts["expired"] = [explain.clean(ref, 40) for ref in info.get("exceptions") or []][:10]
         if veto and veto.get("mode") == "renew":
             options.append(exception_option(ticket, veto))
+        build = load_json(cellroot / "build.json", {}) or {}
+        if isinstance(build, dict) and build.get("tasks"):
+            item = carry_on_option(ticket)
+            item.update({"label": "Let the builder fix it", "recommended": not options,
+                         "does": "The builder gets a round on the same branch to fix the security finding, with what the person says to do; nothing "
+                                 "already built is redone, and verification and review then run again as normal."})
+            options.append(item)
+            facts["stopped"] = stopped_facts(root, cellroot, report)
         options.append(abandon(ticket))
     elif state == "bronze":
         options.append(option("audit", "Audit the repository again",
@@ -715,7 +800,15 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
     if ticket in parked and state != "parked":
         facts["parked"] = {"reason": explain.clean(parked[ticket].get("reason")), "at": explain.clean(parked[ticket].get("at"), 40),
                            "note": "The Factory supervisor also holds this ticket; it runs it again only after a person says so (factory resume --retry)."}
-    options = options[:3]
+    # Never a state with no way forward but abandoning: abandon is never the only option, never first and never recommended.
+    if options and all(item["key"] == "abandon" for item in options):
+        options.insert(0, run_again(ticket, "The line reads the ticket's records again and carries it on from where they say it is.", "Check it again"))
+    ahead = [item for item in options if item["key"] != "abandon"]
+    given_up = [item for item in options if item["key"] == "abandon"]
+    options = ahead[:3 - len(given_up[:1])] + given_up[:1]
+    for item in given_up[:1]:
+        item["recommended"] = False
+        item["does"] += stake_words(work_at_stake(root, cellroot, cell) if cell else None)
     if rule and options:
         options[0]["recommended"] = True
     mark(options, state, claimed=bool(claim))

@@ -260,6 +260,20 @@ def audit_rule() -> Any:
     return _AUDIT_STATE[0]
 
 
+_ROUNDS: List[Any] = []
+
+
+def rounds_rule() -> Any:
+    """The shared rule for how many rounds a ticket has, and a person's carry-on (the intent station's rounds.py), loaded once."""
+    if not _ROUNDS:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mach_rounds", sibling("intent") / "scripts" / "rounds.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _ROUNDS.append(module)
+    return _ROUNDS[0]
+
+
 _FAULTS: List[Any] = []
 
 
@@ -545,6 +559,21 @@ def next_step(project: Project, ticket_id: str, headless: bool, meet_on_main: bo
     if stage == "built":
         decision = load_json(root / "review" / "decision.json", {}) or {}
         summary = load_json(root / "evidence" / "summary.json", {}) or {}
+        state = load_json(root / "build.json", {}) or {}
+        carried = rounds_rule().pending(cell, state.get("loop") if isinstance(state, dict) else 0)
+        if carried:
+            # A person carried this stopped ticket on (build.py carry-on): its next step is the builder's revision, on the same branch,
+            # with the last findings and the person's guidance. Nothing already built is redone.
+            findings = str(root / carried["findings"]) if isinstance(carried.get("findings"), str) and carried["findings"] else None
+            guidance = root / carried["guidance"] if isinstance(carried.get("guidance"), str) and carried["guidance"] else None
+            guided = guidance is not None and guidance.is_file()
+            return step(ticket_id, stage, "revise", f"A person carried this ticket on after it stopped; the builder revises it in round {carried.get('round')} "
+                        f"of {carried.get('max_rounds')}, with the last findings" + (" and the person's guidance." if guided else "."),
+                        agent_type=agent_type("builder"), findings=findings, guidance=str(guidance) if guided else None,
+                        prompt=f"Revise MACH ticket {ticket_id}. A person carried it on after it stopped. Findings: {findings or 'none recorded'}."
+                        + (f" The person's guidance, in their words: {guidance}. Read it first." if guided else "")
+                        + " Make the smallest change that answers the findings" + (" and the guidance" if guided else "")
+                        + "; keep everything already proven, and do not redo work the findings do not name.")
         if decision.get("outcome") == "REJECTED" and decision.get("head") == head:
             return step(ticket_id, stage, "revise", ("A person sent this build back." if decision.get("rejected_by") == "a person" else "The merge station sent this build back." if decision.get("rejected_by") else "Review rejected this build."), agent_type=agent_type("builder"), findings=decision.get("findings"),
                         prompt=f"Revise MACH ticket {ticket_id} after a rejected review. Findings: {decision.get('findings')}")
@@ -591,8 +620,28 @@ def next_step(project: Project, ticket_id: str, headless: bool, meet_on_main: bo
                         prompt=f"Use the MACH cleanup skill: {skill('cleanup')} {ticket_id}")
         return step(ticket_id, stage, "stop", f"Approved. The branch {cell.get('branch')} is ready to merge; MACH does not merge.", needs="merge")
     if stage == "blocked":
-        return step(ticket_id, stage, "stop", "The ticket failed its third round and was escalated." + early_note(cell), needs="person-to-take-over")
-    return step(ticket_id, stage, "stop", f"The cell is in an unknown stage ('{stage}').", needs="person-to-take-over")
+        return step(ticket_id, stage, "stop", stopped_reason(root, cell, project.config) + early_note(cell), needs="person-to-take-over",
+                    command=f"{skill('run')} decide do {ticket_id} carry-on")
+    return step(ticket_id, stage, "stop", f"The cell is in an unknown stage ('{stage}'). A person can carry it on with a fix: {skill('run')} decide {ticket_id}.",
+                needs="person-to-take-over")
+
+
+def stopped_reason(root: Path, cell: Dict[str, Any], config: Dict[str, Any]) -> str:
+    """Why a ticket stopped at its last round, and that a person carries it on with a fix, in one or two sentences."""
+    state = load_json(root / "build.json", {}) or {}
+    loop = state.get("loop") if isinstance(state, dict) and isinstance(state.get("loop"), int) else 0
+    limit = rounds_rule().limit(config, cell)
+    decision = load_json(root / "review" / "decision.json", {}) or {}
+    summary = load_json(root / "evidence" / "summary.json", {}) or {}
+    what = "it failed"
+    if isinstance(decision, dict) and decision.get("outcome") == "ESCALATE":
+        what = "a person sent it back" if decision.get("rejected_by") == "a person" else "the review panel rejected it"
+    elif isinstance(summary, dict) and summary.get("status") == "FAIL_WITH_EVIDENCE":
+        what = "verification failed it"
+    counted = min(rounds_rule().used(cell, loop), limit)
+    return (f"The ticket stopped after {what} in round {counted} of {limit}, its last. A person can carry it on with a fix: the builder "
+            f"gets one more round on the same branch, with the findings and what the person says to do ({skill('run')} decide {root.name}, "
+            "or the Factory Floor).")
 
 
 def test_command_note(root: Path, ticket_id: str, started: bool) -> Optional[Tuple[str, str]]:
