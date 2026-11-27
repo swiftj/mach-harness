@@ -51,6 +51,17 @@ export function significanceOf(type: string): Significance {
   return SIGNIFICANCE[type] ?? "ambient";
 }
 
+/**
+ * One event's significance: its kind's, raised for what a person must see in "What just happened": a
+ * person carrying a ticket on or giving it a fresh set of rounds, and a ticket abandoned.
+ */
+export function significanceOfEvent(event: { readonly type: string; readonly data?: unknown }): Significance {
+  const d = (event.data ?? {}) as { carried_on?: unknown; outcome?: unknown };
+  if (event.type === "station.exited" && d.carried_on) return "major";
+  if (event.type === "run.recorded" && d.outcome === "abandoned") return "major";
+  return significanceOf(event.type);
+}
+
 export function describeEntry(entry: LogEntry): string {
   const event = entry.event;
   if (!isV3(event)) return describe(event);
@@ -101,10 +112,25 @@ export function describeV3(event: AnyV3Event | UnknownV3Event): string {
     case "station.observed":
       return `The supervisor saw ${who} at ${e.data.stage} (sampled).`;
     case "station.entered":
+      // The build station's refusal of another round: the ticket stops for a person (stage blocked).
+      if (e.data.stage === "blocked") return `${who} stopped for a person: it used its judging rounds without passing, and the build station will not run another.`;
       return `${who} entered ${e.data.station}${e.data.action === "revise" ? " to revise" : ""}.`;
-    case "station.exited":
+    case "station.exited": {
+      const c = e.data.carried_on;
+      if (c?.outcome === "rounds-reset") return `A person started work on ${who} again, which gave it a fresh set of rounds${c.round !== null && c.max !== null ? `: round ${c.round} of ${c.max}` : ""}.`;
+      if (c) {
+        const reads = c.round !== null && c.max !== null ? `, round ${c.round} of ${c.max}` : "";
+        return c.by === "person-start"
+          ? `A person started work on ${who} again, which gave it a fresh set of rounds${reads}: it is carried on from the build step.`
+          : `A person carried ${who} on with a fix, which gave it one more round${reads}: it is carried on from the build step.`;
+      }
+      if (e.data.outcome === "escalated") return `${who} left ${e.data.station}: stopped for a person.`;
       return `${who} left ${e.data.station}: ${e.data.outcome}.`;
+    }
+    case "run.recorded":
+      return e.data.outcome === "abandoned" ? `${who} was abandoned: its work was deleted, and nothing of it was merged.` : `${who} is finished: merged, and its record kept.`;
     case "gate.evaluated":
+      if (e.data.gate === "round-limit" && e.data.verdict === "refused") return `${who}: the build station refused another round: it has used every round it is allowed.`;
       // A code that only repeats the verdict (the intent station's `refused`) is not a reason: never "refused (refused)".
       return `${who}: gate ${e.data.gate} ${e.data.verdict}${e.data.reason_code && !/^(refused?|pass(ed)?|overridden|override)$/i.test(e.data.reason_code) ? ` (${e.data.reason_code})` : ""}.`;
     case "build.task_completed":

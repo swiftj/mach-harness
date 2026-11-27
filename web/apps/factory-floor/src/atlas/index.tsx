@@ -31,6 +31,7 @@ import { activeMembers, followDecision, withGrace } from "./follow";
 import { Sheet } from "./Sheet";
 import { FinishedList } from "./Finished";
 import "./atlas.css";
+import { wallMoment } from "../shell/time";
 
 export interface AtlasViewProps {
   /** Show the development frame meter (default: development builds with `?meter`). */
@@ -610,8 +611,7 @@ function connectionWords(state: string): string {
  */
 function StaleStamp({ info }: { info: string }) {
   const [state = "", at = "0"] = info.split("|");
-  const d = new Date(Number(at));
-  const time = `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")} UTC`;
+  const time = wallMoment(Number(at), "second").inline;
   return (
     <div className="atlas-stale-stamp" role="status">
       <svg width="14" height="14" viewBox="-7 -7 14 14" aria-hidden="true">

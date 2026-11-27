@@ -39,9 +39,9 @@ test("the words, fixed", () => {
 
 test("not_kept is read tolerantly", () => {
   const d = O.readCellEvidence(reply({ reason: REASON, setting: "raised", chosen_by: "setting", published: null, raised_to_person: ["escalated", "Bad Code", 3], archive: null, outcome: "merged" }), T);
-  assert.deepEqual(d.notKept, { reason: REASON, setting: "raised", chosenBy: "setting", raisedToPerson: ["escalated"], archive: null });
+  assert.deepEqual(d.notKept, { reason: REASON, setting: "raised", chosenBy: "setting", raisedToPerson: ["escalated"], archive: null, outcome: "merged", closedAt: null });
   assert.equal(O.readCellEvidence(reply(undefined), T).notKept, null, "an observer from before, or files that are there");
-  assert.deepEqual(O.readNotKept({ setting: "keep-all", chosen_by: "someone" }), { reason: null, setting: null, chosenBy: null, raisedToPerson: [], archive: null });
+  assert.deepEqual(O.readNotKept({ setting: "keep-all", chosen_by: "someone" }), { reason: null, setting: null, chosenBy: null, raisedToPerson: [], archive: null, outcome: null, closedAt: null });
   assert.equal(O.readNotKept([]), null);
 });
 
@@ -55,6 +55,16 @@ test("the player says the files were not kept, with the run record's reason, and
   // A record with no reason: the fact alone.
   const plain = M.buildLiveModel(O.readCellEvidence(reply({ reason: null }), T));
   assert.deepEqual(M.notKeptWords(plain.notKept), { title: N.NOT_KEPT_WORDS, detail: null });
+});
+
+test("an abandoned ticket: its work was deleted when it was abandoned, nothing of it was merged", () => {
+  const model = M.buildLiveModel(O.readCellEvidence(reply({ reason: null, outcome: "abandoned", closed_at: "2026-11-27T22:08:30Z", archive: null }), T));
+  assert.equal(model.notKept.closedAt, Date.parse("2026-11-27T22:08:30Z"));
+  assert.deepEqual(M.notKeptWords(model.notKept), { title: N.ABANDONED_WORDS, detail: null });
+  const file = model.runs[0].checks[0].files[0];
+  assert.equal(file.reason, "abandoned");
+  assert.equal(M.fileBanner(file), "This file was deleted with the ticket's work when it was abandoned.");
+  assert.doesNotMatch(M.fileBanner(file), /merged/);
 });
 
 test("with the files there, nothing changes", () => {

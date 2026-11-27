@@ -283,6 +283,10 @@ export interface EvidenceNotKept {
   readonly raisedToPerson: readonly string[];
   /** The archive the run record names when that file is gone; null when none was kept. */
   readonly archive: string | null;
+  /** How cleanup closed the ticket, as its run record says ("abandoned": its work was deleted); null when it does not say. */
+  readonly outcome?: "merged" | "abandoned" | null;
+  /** When cleanup closed it (ms), as its run record says; null when it does not. */
+  readonly closedAt?: number | null;
 }
 
 /** Why the content route refused, as its reason codes (`error.reason`), plus what the client itself saw. */
@@ -398,6 +402,8 @@ export function readNotKept(value: unknown): EvidenceNotKept | null {
     chosenBy: n.chosen_by === "setting" || n.chosen_by === "flag" ? n.chosen_by : null,
     raisedToPerson: list(n.raised_to_person).filter((c): c is string => typeof c === "string" && /^[a-z0-9-]{1,40}$/.test(c)),
     archive: typeof n.archive === "string" ? n.archive.slice(0, 200) : null,
+    outcome: n.outcome === "merged" || n.outcome === "abandoned" ? n.outcome : null,
+    closedAt: typeof n.closed_at === "string" && Number.isFinite(Date.parse(n.closed_at)) ? Date.parse(n.closed_at) : null,
   };
 }
 

@@ -200,13 +200,10 @@ export function LineWorkspace() {
   const running = useSceneStore((s) => s.factoryStatus?.running ?? null);
   const items = useMemo<NeedItem[]>(() => {
     if (!needs.list) return model.needs.map((r) => ({ ticketId: r.ticketId, row: r, need: null }));
-    const listed = needs.list.tickets.map((t) => ({ ticketId: t.ticketId, row: model.rows.find((r) => r.ticketId === t.ticketId) ?? null, need: t }));
-    // A ticket decided here that has left MACH's list keeps its item, with MACH's sentence, until the stream catches up.
-    const decided = Object.keys(needs.outcomes)
-      .filter((t) => !listed.some((i) => i.ticketId === t))
-      .map((t) => ({ ticketId: t, row: model.rows.find((r) => r.ticketId === t) ?? null, need: null }));
-    return [...listed, ...decided];
-  }, [needs.list, needs.outcomes, model.needs, model.rows]);
+    // MACH's list as it is now: a ticket that has left it (decided, here or elsewhere) leaves the strip. What a
+    // decision made here answered stays in the ticket's side panel.
+    return needs.list.tickets.map((t) => ({ ticketId: t.ticketId, row: model.rows.find((r) => r.ticketId === t.ticketId) ?? null, need: t }));
+  }, [needs.list, model.needs, model.rows]);
   // A ticket MACH lists that no record on this page shows yet is opened here, not through the store's selection.
   const [picked, setPicked] = useState<{ readonly ticket: string; readonly selection: EntityRef | null } | null>(null);
   const pickItem = useCallback(
