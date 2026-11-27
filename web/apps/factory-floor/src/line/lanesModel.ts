@@ -16,7 +16,7 @@
  * A builder's own words (a hand-back's reason, a command and why it changed) are never in the reply.
  */
 import type { CellState } from "../sim";
-import { utcClock } from "../shell/time";
+import { wallMoment } from "../shell/time";
 import { NOT_KEPT_LANES_WORDS, NOT_KEPT_WORDS, notKeptDetail } from "../evidence/notKept";
 import { LINE_STATIONS, type LineRow } from "./model";
 
@@ -469,7 +469,7 @@ function chipOf(l: LaneRecord, aside: ReadonlySet<string>, doneIds: ReadonlySet<
 /** A join under way, from its recorded start: being joined, or one that never finished; null when none is under way. */
 function joinUnderWay(reply: LanesReply): { readonly words: string; readonly summary: string; readonly tone: "working" | "held" } | null {
   if (reply.state !== "open" || reply.joining === null) return null;
-  const since = reply.joinStartedAt === null ? null : `${utcClock(reply.joinStartedAt)} UTC`;
+  const since = reply.joinStartedAt === null ? null : wallMoment(reply.joinStartedAt, "second").inline;
   if (reply.joining === "interrupted") {
     const words = `The join ${since ? `started at ${since} and ` : ""}did not finish; every lane's work is kept, and it can be run again.`;
     return { words, summary: words, tone: "held" };
@@ -753,7 +753,7 @@ function handedBackNote(l: LaneRecord, joined: boolean): string {
   return `handed back: ${finished}${taskList(remaining)} ${isAre(remaining.length)} built in the cell, one at a time, ${joined ? "now that the lanes are joined" : "after the join"}`;
 }
 
-const clock = (t: number | null): string | null => (t === null ? null : `${utcClock(t)} UTC`);
+const clock = (t: number | null): string | null => (t === null ? null : wallMoment(t, "second").inline);
 
 /** A handed-back lane in the panel's summary: what it handed back, and where its tasks go. */
 function handedBackSentence(l: LaneRecord, joined: boolean): string {
@@ -883,7 +883,7 @@ function timingOf(reply: LanesReply, lanes: readonly LaneRecord[], times: Readon
 // ---------------------------------------------------------------- a changed command (any build, in lanes or not)
 
 export interface CommandsPanel {
-  /** One sentence per change: "The test command changed at 10:40:00 UTC." */
+  /** One sentence per change: "The test command changed at today 10:40:00." */
   readonly lines: readonly string[];
   readonly note: string;
 }

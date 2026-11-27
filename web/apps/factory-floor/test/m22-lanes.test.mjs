@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sim, live } from "./_load.mjs";
+import { asUtc } from "./_moments.mjs";
 import { ev, finalize } from "./fixtures/v3.mjs";
 
 const M = await import("../src/line/lanesModel.ts");
@@ -164,19 +165,19 @@ test("a join under way is said from its recorded start until its result; one tha
   let reply = M.readLanesReply(raw);
   assert.equal(reply.joinStartedAt, T0 + 26 * 60_000 + 10_000);
   let line = M.laneLine(reply, null);
-  assert.equal(line.moment.words, "The lanes are being joined, since 10:26:10 UTC.");
+  assert.equal(asUtc(line.moment.words, T0 + 26 * 60_000 + 10_000), "The lanes are being joined, since 10:26:10 UTC.");
   assert.equal(line.moment.tone, "working");
   assert.equal(line.marker, "lanes done");
-  assert.match(M.lanesPanel(reply, null).summary, /The lanes are being joined, since 10:26:10 UTC: their commits are landed on the ticket's branch, one per task in plan order, and the whole suite is run on the result\./);
+  assert.match(asUtc(M.lanesPanel(reply, null).summary, T0 + 26 * 60_000 + 10_000), /The lanes are being joined, since 10:26:10 UTC: their commits are landed on the ticket's branch, one per task in plan order, and the whole suite is run on the result\./);
   // Not known whether its process is alive (another machine's): said the same way, from the recorded start.
   line = M.laneLine(M.readLanesReply({ ...raw, joining: "unknown" }), null);
-  assert.equal(line.moment.words, "The lanes are being joined, since 10:26:10 UTC.");
+  assert.equal(asUtc(line.moment.words, T0 + 26 * 60_000 + 10_000), "The lanes are being joined, since 10:26:10 UTC.");
   // Interrupted: it never finished.
   reply = M.readLanesReply({ ...raw, joining: "interrupted" });
   line = M.laneLine(reply, null);
-  assert.equal(line.moment.words, "The join started at 10:26:10 UTC and did not finish; every lane's work is kept, and it can be run again.");
+  assert.equal(asUtc(line.moment.words, T0 + 26 * 60_000 + 10_000), "The join started at 10:26:10 UTC and did not finish; every lane's work is kept, and it can be run again.");
   assert.equal(line.moment.tone, "held");
-  assert.match(M.lanesPanel(reply, null).summary, /The join started at 10:26:10 UTC and did not finish; every lane's work is kept, and it can be run again\./);
+  assert.match(asUtc(M.lanesPanel(reply, null).summary, T0 + 26 * 60_000 + 10_000), /The join started at 10:26:10 UTC and did not finish; every lane's work is kept, and it can be run again\./);
   // With no join under way, the moment is as before; a value the observer does not send is read as none.
   assert.equal(M.laneLine(M.readLanesReply({ ...raw, joining: null }), null).moment.words, "The join stopped and landed nothing (branch-moved); every lane's work is kept.");
   assert.equal(M.readLanesReply({ ...raw, joining: "stuck" }).joining, null);

@@ -14,7 +14,7 @@
  */
 import type { CellState, Scene } from "../sim";
 import { finishedAt } from "../sim";
-import { utcClock } from "./time";
+import { wallMoment } from "./time";
 
 /** Past this age of the newest record, while a ticket is at work, the freshness turns to the warning tone. */
 export const STALE_RECORD_MS = 10 * 60_000;
@@ -37,13 +37,13 @@ export function agoWords(ms: number): string {
   return age === null ? "just now" : `${age} ago`;
 }
 
-const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-/** The exact moment, as the style guide's exact format, in UTC as real history is: "Tuesday 24 November 2026, 14:00:05 UTC". */
+/**
+ * The exact moment, in full, in the person's locale and time zone, with the zone (the shared formatter):
+ * "Tuesday 24 November 2026, 14:00:05 GMT". The name is older than the rule: it is no longer UTC.
+ */
 export function exactUtc(t: number): string {
-  const d = new Date(Math.max(0, t));
-  return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${utcClock(t)} UTC`;
+  return wallMoment(Math.max(0, t), "second").exact;
 }
 
 /**

@@ -102,6 +102,8 @@ func TestFixedVectors(t *testing.T) {
 		r.Decide(ctx, Decision{Ticket: "T-1", Option: "send-back", Body: Body{By: str("-rf A"), Reason: str("--json because\nit is wrong")}}, nil),
 		r.Decide(ctx, Decision{Ticket: "T-2", Option: "accept", Body: Body{ADRs: []string{"ADR-0007", "ADR-0008"}}}, nil),
 		r.Decide(ctx, Decision{Ticket: "T-3", Option: "set-test-command", Body: Body{TestCmd: str("make test"), Reason: str("the old one is gone")}}, nil),
+		r.Decide(ctx, Decision{Ticket: "6", Option: "carry-on", Body: Body{Guidance: str("--json; rm -rf / `x` $(y)\nKeep the date in UTC.")}}, nil),
+		r.Decide(ctx, Decision{Ticket: "6", Option: "carry-on"}, nil),
 	} {
 		if !reply.OK() || string(reply.Data) != `{"ok": 1}` {
 			t.Fatalf("%+v", reply)
@@ -115,6 +117,9 @@ func TestFixedVectors(t *testing.T) {
 		{"decide", "do", "T-1", "send-back", "--by=-rf A", "--reason=--json because\nit is wrong", "--via=floor", "--json"},
 		{"decide", "do", "T-2", "accept", "--adr=ADR-0007", "--adr=ADR-0008", "--via=floor", "--json"},
 		{"decide", "do", "T-3", "set-test-command", "--reason=the old one is gone", "--test-cmd=make test", "--via=floor", "--json"},
+		// The guidance is one argument, as written: never a shell string, never read as another option.
+		{"decide", "do", "6", "carry-on", "--guidance=--json; rm -rf / `x` $(y)\nKeep the date in UTC.", "--via=floor", "--json"},
+		{"decide", "do", "6", "carry-on", "--via=floor", "--json"},
 	}
 	calls := f.calls(t)
 	if len(calls) != len(want) {
@@ -315,6 +320,10 @@ func TestDecisionChecks(t *testing.T) {
 		"no answers":               {Ticket: "T-1", Option: "answers"},
 		"answer twice":             {Ticket: "T-1", Option: "answers", Body: Body{Answers: []Answer{{N: 1, LeaveOpen: true}, {N: 1, Answer: str("a")}}}},
 		"answer and open":          {Ticket: "T-1", Option: "answers", Body: Body{Answers: []Answer{{N: 1, LeaveOpen: true, Answer: str("a")}}}},
+		"guidance elsewhere":       {Ticket: "T-1", Option: "retry", Body: Body{Guidance: str("do it better")}},
+		"guidance with ESC":        {Ticket: "T-1", Option: "carry-on", Body: Body{Guidance: str("a\x1b[2Jb")}},
+		"guidance blank":           {Ticket: "T-1", Option: "carry-on", Body: Body{Guidance: str("  \n ")}},
+		"guidance too long":        {Ticket: "T-1", Option: "carry-on", Body: Body{Guidance: str(strings.Repeat("y", MaxGuidance+1))}},
 	} {
 		if got := r.Decide(context.Background(), d, nil); got.Kind != KindInvalid {
 			t.Errorf("%s: %+v", name, got)
@@ -325,6 +334,11 @@ func TestDecisionChecks(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 	if got := r.Decide(context.Background(), Decision{Ticket: "T-1", Option: "wait"}, nil); got.Kind != KindInvalid {
+		t.Fatalf("%+v", got)
+	}
+	// Guidance on another option only when the list offered it with takes: ["guidance"].
+	takes := func(t, o string) bool { return t == "T-1" && (o == "revise" || o == TakesKey("revise", "guidance")) }
+	if got := r.Decide(context.Background(), Decision{Ticket: "T-1", Option: "revise", Body: Body{Guidance: str("smaller steps")}}, takes); !got.OK() {
 		t.Fatalf("%+v", got)
 	}
 }

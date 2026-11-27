@@ -27,6 +27,33 @@ export interface NeedOption {
   readonly confirm: boolean;
   /** MACH takes the ticket's step from the other worker as it records this (the take-over, or a release to the Factory). */
   readonly takesOver: boolean;
+  /** Optional free-text inputs the option takes, by name (MACH's `takes`, such as "guidance"): one text box each, never required. */
+  readonly takes: readonly TakesName[];
+}
+
+/** The optional inputs the page knows how to ask for and send (each is a body field of the same name). */
+export const TAKES = ["guidance"] as const;
+export type TakesName = (typeof TAKES)[number];
+
+/** What a text box for an optional input says, and how long its words may be (the observer's own limit). */
+export const TAKES_WORDS: Readonly<Record<TakesName, { readonly label: string; readonly hint: string; readonly max: number }>> = {
+  guidance: { label: "What should the builder do differently?", hint: "Recorded with your decision and given to the builder with the findings. Left empty, the builder works from the findings alone.", max: 4000 },
+};
+
+/** One item the stop names as failed: its ID (`AC-03`, `R2`), its text and the verifier's or reviewer's note, as recorded. */
+export interface StoppedItem {
+  readonly id: string;
+  readonly text: UncheckedText | null;
+  readonly note: UncheckedText | null;
+}
+
+/** MACH's facts of a stop (`situation.stopped`): where, the rounds, what failed, and the findings file. */
+export interface StoppedFacts {
+  readonly station: string | null;
+  readonly round: { readonly used: number | null; readonly max: number | null };
+  readonly failed: readonly StoppedItem[];
+  /** Project-relative; never a link. */
+  readonly findingsFile: string | null;
 }
 
 export interface NeedQuestion {
@@ -57,6 +84,8 @@ export interface NeedTicket {
    * the options in the warning tone; they never disable an option or take its place.
    */
   readonly warnings: readonly string[];
+  /** A ticket stopped for a person: what MACH says stopped it (`situation.stopped`); null when it says nothing of it. */
+  readonly stopped: StoppedFacts | null;
 }
 
 export interface NeedsList {
@@ -76,11 +105,50 @@ export const FIELD = {
   reason: "/api/v1/needs tickets[].situation.reason",
   detail: "/api/v1/needs tickets[].situation",
   question: "/api/v1/needs tickets[].questions[].text",
+  stoppedText: "/api/v1/needs tickets[].situation.stopped.failed[].text",
+  stoppedNote: "/api/v1/needs tickets[].situation.stopped.failed[].note",
 } as const;
 
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._#/-]{0,59}$/;
+const roundNum = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 99 ? v : null);
+const relPath = (v: unknown): string | null => {
+  const p = str(v);
+  return p && !p.startsWith("/") && !p.includes("..") && p.length <= 300 ? p : null;
+};
+
+/** `situation.stopped`, read tolerantly: an item without a plain ID is left out; at most 50 items. */
+export function readStopped(value: unknown): StoppedFacts | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const s = obj(value);
+  const round = obj(s.round);
+  const failed: StoppedItem[] = [];
+  for (const item of arr(s.failed).slice(0, 50)) {
+    const f = obj(item);
+    const id = str(f.id);
+    if (!id || !SAFE_ID.test(id)) continue;
+    failed.push({ id, text: unchecked(f.text, FIELD.stoppedText, 300), note: unchecked(f.note, FIELD.stoppedNote, 600) });
+  }
+  return { station: str(s.station) && /^[a-z-]{1,30}$/.test(s.station as string) ? (s.station as string) : null, round: { used: roundNum(round.used), max: roundNum(round.max) }, failed, findingsFile: relPath(s.findings_file) };
+}
+
 /** Options in the order a person reads them: the recommended one first, then MACH's order. */
-export function orderedOptions<T extends { readonly recommended: boolean }>(options: readonly T[]): T[] {
-  return [...options.filter((o) => o.recommended), ...options.filter((o) => !o.recommended)];
+export function orderedOptions<T extends { readonly recommended: boolean; readonly key?: string }>(options: readonly T[]): T[] {
+  // Abandoning is always reachable and always last: it deletes the work.
+  const last = (o: T) => o.key === "abandon";
+  return [...options.filter((o) => o.recommended && !last(o)), ...options.filter((o) => !o.recommended && !last(o)), ...options.filter(last)];
+}
+
+/** The option a stopped ticket is carried on with (MACH's key; another agent's run.py offers it). */
+export const CARRY_ON = "carry-on";
+
+/**
+ * What happens after a carry-on is recorded, said truthfully: a Factory running here takes the ticket
+ * up at the build step; with none running, /mach pull does. Unknown (the status is not read): both.
+ */
+export function carryOnNext(running: boolean | null | undefined): string {
+  if (running === true) return "The Factory running here picks it up at the build step, with your words and the findings.";
+  if (running === false) return "No Factory is running here. /mach pull in Claude Code carries it on from the build step.";
+  return "A running Factory picks it up at the build step; if none is running, /mach pull in Claude Code carries it on from there.";
 }
 
 function readOption(value: unknown): NeedOption | null {
@@ -100,6 +168,7 @@ function readOption(value: unknown): NeedOption | null {
     needsAnswers: needs.includes("answers"),
     confirm: o.confirm === true || o.takes_over === true,
     takesOver: o.takes_over === true,
+    takes: arr(o.takes).filter((x): x is TakesName => typeof x === "string" && (TAKES as readonly string[]).includes(x)),
   };
 }
 
@@ -147,6 +216,7 @@ export function readNeeds(data: unknown): NeedsList {
         .filter((q) => typeof q.n === "number" && Number.isInteger(q.n) && q.n > 0)
         .map((q) => ({ n: q.n as number, text: unchecked(q.text, FIELD.question, 300), followUp: unchecked(q.follow_up, FIELD.question, 300) })),
       warnings: sentences(item.warnings),
+      stopped: readStopped(situation.stopped),
     });
   }
   const at = str(d.read_at);
@@ -226,13 +296,23 @@ export function answersPayload(questions: readonly NeedQuestion[], drafts: Reado
 }
 
 /** The body for one decision. A name only when the person gave one (else MACH records Git's user name); a reason only where asked for. */
-export function decisionBody(option: NeedOption, input: { readonly name: string; readonly reason: string; readonly testCmd: string; readonly answers?: DecisionBody["answers"] | null }): DecisionBody {
+export function decisionBody(
+  option: NeedOption,
+  input: { readonly name: string; readonly reason: string; readonly testCmd: string; readonly answers?: DecisionBody["answers"] | null; readonly takes?: Readonly<Partial<Record<TakesName, string>>> },
+): DecisionBody {
   const name = input.name.trim();
+  // An optional input is sent only when the option takes it and the person wrote something, as written.
+  const taken: Partial<Record<TakesName, string>> = {};
+  for (const key of option.takes) {
+    const v = input.takes?.[key] ?? "";
+    if (v.trim()) taken[key] = v.slice(0, TAKES_WORDS[key].max);
+  }
   return {
     ...(name ? { by: name } : {}),
     ...(option.needsReason ? { reason: input.reason } : {}),
     ...(option.needsTestCommand ? { test_cmd: input.testCmd.trim() } : {}),
     ...(option.needsAnswers && input.answers ? { answers: input.answers } : {}),
+    ...taken,
   };
 }
 
@@ -251,7 +331,8 @@ export function confirmWords(ticket: string, option: NeedOption): { readonly tit
     case "merge":
       return { title: `Merge ${ticket}?`, description: `MACH merges ${ticket} into the main branch, and cleanup follows. A merge cannot be undone from here.`, verb: "Merge", tone: "primary" };
     case "abandon":
-      return { title: `Abandon ${ticket}?`, description: `MACH takes ${ticket} off the line and removes its cell, with your reason. This cannot be undone from here; MACH says how to get its work back.`, verb: "Abandon", tone: "danger" };
+      // MACH's own sentence of what abandoning does (it says the work is deleted for good).
+      return { title: `Abandon ${ticket}?`, description: option.does ? `${option.does} This cannot be undone.` : `MACH takes ${ticket} off the line and removes its cell, with your reason. This cannot be undone.`, verb: "Abandon", tone: "danger" };
     case "take-over":
       // MACH's own sentence says what happens to the other worker, in the words of the take-over it carries out:
       // "the other worker stops at its next step", and "the Factory's run on it is ended" when it was a Factory run.
@@ -283,6 +364,14 @@ export function waitedWords(ms: number): string {
 
 /** The sentence when something waits and no Factory runs here. */
 export const NOT_RUNNING = "No Factory is running here. /mach pull in Claude Code carries it on.";
+
+/**
+ * The same, when a ticket stopped for a person is among them: true for it too, said in full. Starting the
+ * Factory gives a ticket stopped for its rounds a fresh set of rounds; a decision made here first is
+ * taken into account.
+ */
+export const NOT_RUNNING_STOPPED =
+  "No Factory is running here. /mach pull in Claude Code starts it: it takes up each decision made here, and gives a ticket stopped for its rounds a fresh set of rounds, from the build step.";
 
 /** The stop's confirmation. */
 export const STOP_WORDS = { title: "Stop the Factory?", description: "Stops the Factory's running work on this computer. /mach pull starts it again.", verb: "Stop the Factory" } as const;

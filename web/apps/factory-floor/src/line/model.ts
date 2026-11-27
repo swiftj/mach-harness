@@ -19,8 +19,11 @@
  * Finished tickets (landed and cleaned up, or closed) are listed after the rest, the newest few only.
  */
 import {
-  MAX_ROUNDS,
   MODELS,
+  carryOns,
+  roundLimit,
+  roundNow,
+  shownRound,
   capacityWaitOf,
   cellStopOf,
   mockWaitsOf,
@@ -166,8 +169,10 @@ export interface LineRow {
   /** M15: the merge-time recheck sent it back this many times (each a repeat review round, no judging round used). */
   readonly rechecks?: number;
   readonly times: readonly StationTime[];
-  /** Judging rounds started (verification or review), of MAX_ROUNDS. */
+  /** Judging rounds started (verification or review) in the current allowance, of `roundLimit`. */
   readonly roundsUsed: number;
+  /** The round limit in force (sim/rounds.ts): the configured one, or the one a person's carry-on set. */
+  readonly roundLimit?: number;
   /** Recorded spend across its executions; null when none is recorded. `partial`: a record says it may be under-reported, or only some executions recorded one. */
   readonly cost: { readonly usd: number; readonly partial: boolean } | null;
   /** When its first record was made (for a stable order). */
@@ -178,6 +183,20 @@ export interface LineRow {
 
 const ROUND_WORDS = ["", "once", "twice"];
 export const timesWords = (n: number): string => ROUND_WORDS[n] ?? `${n} times`;
+
+/** "Sent back once", "Sent back twice", "Sent back 3 times": under a stopped ticket's marker, counted across every set of rounds. */
+export function sentBackTimesWords(times: number): string {
+  return `Sent back ${timesWords(times)}`;
+}
+
+/**
+ * Whether a row draws its send-back arc: only where both ends are drawn, the marker at the station the
+ * work went back to and the sending station's node. A stopped ticket draws none: the words under its
+ * marker say how often it was sent back, and its panel lists every round.
+ */
+export function drawsSentBack(row: Pick<LineRow, "state" | "sentBack" | "column" | "beforeMerge">): boolean {
+  return row.sentBack !== null && row.state !== "stopped" && !row.beforeMerge && row.sentBack.to === row.column && row.sentBack.from !== row.column;
+}
 
 function visitMs(v: StationVisit, now: number): StationTime["ms"] {
   if (v.leftAt === null) return Math.max(0, now - v.enteredAt);
@@ -200,12 +219,16 @@ export function stationTimes(cell: CellState, now: number): StationTime[] {
   return out;
 }
 
-/** The judging rounds started: the highest round any verification or review began. */
+/**
+ * The judging rounds started in the current allowance: the highest round a verification or review began
+ * since a person last gave the ticket a fresh set of rounds (all of them when none did), never above the
+ * limit in force.
+ */
 export function roundsUsed(cell: CellState): number {
   let n = 0;
-  for (const v of cell.verifications) n = Math.max(n, v.round);
-  for (const r of cell.reviews) n = Math.max(n, r.round);
-  return n;
+  for (const v of cell.verifications) n = Math.max(n, shownRound(cell, v.round) ?? 0);
+  for (const r of cell.reviews) n = Math.max(n, shownRound(cell, r.round) ?? 0);
+  return Math.min(n, roundLimit(cell));
 }
 
 /** The recorded spend of an execution, or null (never 0 for "not recorded"). */
@@ -239,9 +262,21 @@ function sentBackOf(cell: CellState): LineRow["sentBack"] {
   let builds = 0;
   let from: number | null = null;
   let last: number | null = null;
+  // A person's carry-on takes the stopped work up again at the build station: the first build visit after
+  // it carries on the send-back that stopped it, and is not counted as another.
+  const carried = carryOns(cell).filter((c) => c.outcome === "carried-on-by-person").map((c) => c.at);
+  const skip = new Set<StationVisit>();
+  for (const at of carried) {
+    const next = cell.visits.find((v) => v.station === "build" && v.enteredAt >= at);
+    if (next) skip.add(next);
+  }
   for (const v of cell.visits) {
     const c = columnOf(v.station);
     if (c === null) continue;
+    if (skip.has(v)) {
+      last = c;
+      continue;
+    }
     if (c === BUILD) {
       builds += 1;
       if (builds > 1 && last !== null && last > BUILD) from = last;
@@ -252,6 +287,12 @@ function sentBackOf(cell: CellState): LineRow["sentBack"] {
 }
 
 /** The last judging outcome before the open build visit (a revision), in words. */
+/** A recorded round in words: "3", or "4 (1 of 3 of its fresh set)" once a person gave it a fresh set of rounds. */
+export function roundName(cell: CellState, round: number): string {
+  const shown = shownRound(cell, round);
+  return (cell.roundBase ?? 0) > 0 && shown !== null ? `${round} (${shown} of ${roundLimit(cell)} of its fresh set)` : String(round);
+}
+
 function revisionWhy(cell: CellState): string | null {
   const reviews = cell.reviews.filter((r) => r.outcome !== null);
   const verifications = cell.verifications.filter((v) => v.status !== "running");
@@ -259,12 +300,12 @@ function revisionWhy(cell: CellState): string | null {
   const lastVerify = verifications.at(-1) ?? null;
   const reviewAt = lastReview?.decidedAt ?? -1;
   const verifyAt = lastVerify?.decidedAt ?? -1;
-  if (lastReview?.humanSentBack && reviewAt >= verifyAt) return `A person sent it back in round ${lastReview.round}. The builder is working on their reason.`;
+  if (lastReview?.humanSentBack && reviewAt >= verifyAt) return `A person sent it back in round ${roundName(cell, lastReview.round)}. The builder is working on their reason.`;
   if (lastReview && lastReview.outcome === "REJECTED" && reviewAt >= verifyAt) {
     const blockers = lastReview.findings.filter((f) => f.severity === "blocker" && !f.outvoted).length;
-    return `Review rejected round ${lastReview.round}${blockers ? ` with ${blockers} blocking finding${blockers === 1 ? "" : "s"}` : ""}. The builder is fixing what it found.`;
+    return `Review rejected round ${roundName(cell, lastReview.round)}${blockers ? ` with ${blockers} blocking finding${blockers === 1 ? "" : "s"}` : ""}. The builder is fixing what it found.`;
   }
-  if (lastVerify && lastVerify.status !== "PASS") return `Verification failed in round ${lastVerify.round}. The builder is fixing what it found.`;
+  if (lastVerify && lastVerify.status !== "PASS") return `Verification failed in round ${roundName(cell, lastVerify.round)}. The builder is fixing what it found.`;
   return null;
 }
 
@@ -319,6 +360,10 @@ function waitingColumn(cell: CellState): number {
     case "building":
       return BUILD;
     case "built": {
+      // A person carried it on and its revision has not started: the build station is next.
+      const carried = carryOns(cell).filter((c) => c.outcome === "carried-on-by-person").at(-1);
+      const lastBuildAt = [...cell.visits].reverse().find((v) => v.station === "build")?.enteredAt ?? Number.NEGATIVE_INFINITY;
+      if (carried && carried.at >= lastBuildAt) return BUILD;
       const lastJudge = [...cell.visits].reverse().find((v) => v.station === "verify" || v.station === "review" || v.station === "merge");
       const lastBuild = [...cell.visits].reverse().find((v) => v.station === "build");
       // Judged after the last build and not passed: back to Build; otherwise on to Verify.
@@ -402,6 +447,7 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
     risk: cell.meta.unknown.includes("risk") ? null : cell.risk,
     times: stationTimes(cell, now),
     roundsUsed: roundsUsed(cell),
+    roundLimit: roundLimit(cell),
     cost: ticketCost(scene, cell.ticketId),
     openedAt: cell.openedAt,
     sentBack: sentBackOf(cell),
@@ -455,8 +501,8 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
     const why = parked
       ? `${parkedWords(parked.notProgressing)}.`
       : lastReview?.outcome === "ESCALATE"
-        ? `Review rejected it in round ${lastReview.round}, the last of ${MAX_ROUNDS}. The line has stopped work on it.`
-        : `It used its ${MAX_ROUNDS} judging rounds without passing. The line has stopped work on it.`;
+        ? `Review rejected it in round ${Math.min(shownRound(cell, lastReview.round) ?? lastReview.round, roundLimit(cell))}, the last of ${roundLimit(cell)}. The line has stopped work on it.`
+        : `It used its ${roundLimit(cell)} judging rounds without passing. The line has stopped work on it.`;
     return {
       ...base,
       state: "stopped",
@@ -467,7 +513,7 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
       since: attention?.at ?? [...cell.stageHistory].reverse().find((h) => h.stage === "blocked")?.at ?? null,
       held: null,
       why,
-      needs: "Read why, then re-plan it, fix it by hand, or abandon it.",
+      needs: "Read what failed, then carry it on with a fix: the builder takes it up again at the build step. Or re-plan it, fix it by hand, or abandon it.",
       command: command("decide", cell.ticketId),
     };
   }
@@ -593,7 +639,7 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
       since: open.enteredAt,
       held: null,
       why: revision ?? `${(LINE_STATIONS[column] as LineStation).worker} at work. ${(LINE_STATIONS[column] as LineStation).does}`,
-      needs: revision && cell.round >= MAX_ROUNDS ? `Nothing yet. This is round ${cell.round}, the last: another rejection stops the ticket for you.` : "Nothing. It moves on by itself.",
+      needs: revision && roundNow(cell) >= roundLimit(cell) ? `Nothing yet. This is round ${roundNow(cell)} of ${roundLimit(cell)}, the last: another rejection stops the ticket for you.` : "Nothing. It moves on by itself.",
       command: command("explain", cell.ticketId),
     };
   }

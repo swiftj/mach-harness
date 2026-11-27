@@ -101,7 +101,7 @@ export function HelpSheet({ open, onOpenChange, opener }: { open: boolean; onOpe
                 </span>
               </li>
               <li>The Factory Floor shows the present only. It has no control that starts, pauses, schedules or approves anything: where a person must act, it shows the /mach command to run in Claude Code.</li>
-              <li>Times of real history are UTC wall-clock. A history that is partial (some of it could not be received) or reconstructed (seeded from a snapshot) says so beside the source badge.</li>
+              <li>Times of real history are in your own time zone, with the date: “Today 14:53”, “Yesterday 20:02”, “24 Nov 20:02”. Hover over a time for the full date, time and zone; an older one also says how old it is. A history that is partial (some of it could not be received) or reconstructed (seeded from a snapshot) says so beside the source badge.</li>
             </ul>
           </section>
           <section aria-labelledby="legend" className="md:col-span-2">

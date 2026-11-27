@@ -19,7 +19,7 @@ import (
 
 // FormatVersion changes whenever State's shape or a fold rule changes: a persisted projection
 // built under another version is discarded and rebuilt.
-const FormatVersion = 10 // 10: M18, a cell carries what its groom exit recorded of a small change; 9: M11, waves gone, a slice and a cell carry their epic and issue; 8: a person's decision at the approval gate (M9: approved or sent back); 7: M7 released claims, slice revision changes and pending revisions, wave revisions from intake, killed executions; 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies; 6: slice titles and holds, a required gate ended by the approval it waited for
+const FormatVersion = 11 // 11: a cell carries its round limit and each time a person carried it on; 10: M18, a cell carries what its groom exit recorded of a small change; 9: M11, waves gone, a slice and a cell carry their epic and issue; 8: a person's decision at the approval gate (M9: approved or sent back); 7: M7 released claims, slice revision changes and pending revisions, wave revisions from intake, killed executions; 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies; 6: slice titles and holds, a required gate ended by the approval it waited for
 
 // Bounds on lists one hostile source could grow without limit; what is dropped is counted.
 const (
@@ -349,27 +349,33 @@ type Cell struct {
 	AppType      string `json:"app_type,omitempty"`
 	// AppTypeSource is the event that recorded the app type (the plan's exit), "" when a run
 	// record gave it. Contracts and TasksPlanned are the plan exit's counts.
-	AppTypeSource string         `json:"app_type_source,omitempty"`
-	Contracts     *int64         `json:"contracts,omitempty"`
-	TasksPlanned  *int64         `json:"tasks_planned,omitempty"`
-	FirstSeen     *Stamp         `json:"first_seen"`
-	Updated       *Stamp         `json:"updated"`
-	Lifecycle     bool           `json:"lifecycle"`
-	CurrentVisit  string         `json:"current_visit,omitempty"`
-	Round         *int64         `json:"round"`
-	Visits        []*Visit       `json:"visits"`
-	Gates         []*Gate        `json:"gates"`
-	GatesDropped  int64          `json:"gates_dropped"`
-	Tasks         []*Task        `json:"tasks"`
-	Checks        []*Check       `json:"checks"`
-	Targets       []Target       `json:"targets"`
-	Reviews       []*ReviewRound `json:"reviews"`
-	Findings      []Finding      `json:"findings"`
-	Approvals     []*Approval    `json:"approvals"`
-	Merge         *Merge         `json:"merge"`
-	Cleanup       *Cleanup       `json:"cleanup"`
-	Executions    []string       `json:"executions"`
-	Archived      bool           `json:"archived"`
+	AppTypeSource string `json:"app_type_source,omitempty"`
+	Contracts     *int64 `json:"contracts,omitempty"`
+	TasksPlanned  *int64 `json:"tasks_planned,omitempty"`
+	FirstSeen     *Stamp `json:"first_seen"`
+	Updated       *Stamp `json:"updated"`
+	Lifecycle     bool   `json:"lifecycle"`
+	CurrentVisit  string `json:"current_visit,omitempty"`
+	Round         *int64 `json:"round"`
+	// RoundMax is the round limit a person's carry-on record set (nil: the configured limit), and
+	// CarriedOn each carry-on, oldest first: a fresh allowance ("person-start") or one more round
+	// ("person-decision").
+	RoundMax     *int64         `json:"round_max"`
+	RoundBase    *int64         `json:"round_base"`
+	CarriedOn    []*CarriedOn   `json:"carried_on,omitempty"`
+	Visits       []*Visit       `json:"visits"`
+	Gates        []*Gate        `json:"gates"`
+	GatesDropped int64          `json:"gates_dropped"`
+	Tasks        []*Task        `json:"tasks"`
+	Checks       []*Check       `json:"checks"`
+	Targets      []Target       `json:"targets"`
+	Reviews      []*ReviewRound `json:"reviews"`
+	Findings     []Finding      `json:"findings"`
+	Approvals    []*Approval    `json:"approvals"`
+	Merge        *Merge         `json:"merge"`
+	Cleanup      *Cleanup       `json:"cleanup"`
+	Executions   []string       `json:"executions"`
+	Archived     bool           `json:"archived"`
 	// Abandoned is cleanup's abandon run record (run.recorded outcome "abandoned"; M7 N7): the
 	// ticket is closed, not waiting on anyone. ReissuedAs is the ticket intake reissued its slice
 	// to afterwards (slice.materialized for the same slice with another ticket), else "".
@@ -877,4 +883,19 @@ type Gap struct {
 	// NoticedMS is when the observer noticed it (the gap record's observed_at), Unix ms; nil when
 	// not recorded.
 	NoticedMS *int64 `json:"noticed_ms,omitempty"`
+}
+
+// CarriedOn is one record of a person changing a ticket's rounds (rounds.py): a carry-on past its stop
+// ("carried-on-by-person") or a fresh count when a person started the Factory ("rounds-reset"); who
+// gave them ("person-start", "person-decision"; "" when not recorded), the round a person reads and its
+// limit, the round's own number since the ticket began, the rounds that no longer count, and when.
+type CarriedOn struct {
+	Outcome   string `json:"outcome"`
+	Round     *int64 `json:"round"`
+	Max       *int64 `json:"max"`
+	Number    *int64 `json:"number"`
+	Base      *int64 `json:"base"`
+	By        string `json:"by,omitempty"`
+	StoppedAt string `json:"stopped_at,omitempty"`
+	At        *Stamp `json:"at"`
 }

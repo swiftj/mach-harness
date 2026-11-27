@@ -25,7 +25,7 @@ import type { InsightsReply } from "../data/types";
 import { simulatedSnapshot } from "../fixtures";
 import type { CohortBy } from "../model/cohorts";
 import type { AreaId } from "../model/findings";
-import { clockText } from "../model/format";
+import { clockInline } from "../model/format";
 import { simulatedInsights } from "../model/insights";
 import type { AreaData, RowsRequest, WindowChoice } from "../ui/types";
 import { AnalyticsView, type AnalyticsUiView } from "../ui/Workspace";
@@ -125,7 +125,7 @@ function App() {
           {...(insights ? { insights } : {})}
           {...(configs ? { configs } : {})}
           source="simulation"
-          asOf={generated !== null ? `As of ${clockText(generated)}` : "As of the newest simulated record"}
+          asOf={generated !== null ? `As of ${clockInline(generated)}` : "As of the newest simulated record"}
           sourceLabel={LABELS[mode ?? ""] ?? `Simulated history, seed ${seed ?? 6502}`}
           view={view}
           onView={onView}

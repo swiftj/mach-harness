@@ -37,7 +37,7 @@ import {
 import { historyEndedAt, useScene, useSceneStore, useStore } from "../../scene";
 import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, ProjectGlyph } from "../glyphs";
 import { IconButton } from "../IconButton";
-import { artifactOf, selectable, gateOf, kindOf, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
+import { artifactOf, selectable, gateOf, kindOf, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, toolFamily, getTimeBase } from "../vocab";
 import {
   ActorAnatomy,
   AgentAnatomy,
@@ -57,6 +57,7 @@ import {
 } from "./anatomies";
 import { identityOf, parseStation, pickedVisitOf, selectEntity } from "./entity";
 import { ownerOfId, ownerRefOf } from "./owner";
+import { When } from "../When";
 import { AuthorityBadge, EntityLink, Evidence, StationHistoryLink, timeCaveatWords, useEntityEvents } from "./parts";
 import { analyticsStationOf } from "../../scene/analytics";
 import { Provenance } from "./Provenance";
@@ -84,7 +85,8 @@ function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null
   switch (kindOf(entity)) {
     case "actor": {
       const a = value as ActorState;
-      return { glyph: <ActorGlyph actor={a.id} size={28} />, state: "idle", word: a.acts ? `${a.acts} acts so far` : "Not acted yet", phase: "running", since: a.lastActedAt };
+      // No act in the history held: said as a fact of the records, never as if it had refused or failed to act.
+      return { glyph: <ActorGlyph actor={a.id} size={28} />, state: "idle", word: a.acts ? `${a.acts} acts so far` : "No act recorded here yet", phase: "running", since: a.lastActedAt };
     }
     case "slice": {
       const s = value as SliceState;
@@ -263,7 +265,7 @@ function TimeStatus({ look }: { look: Look | null }) {
     <p className="mt-2 text-caption text-ink-muted">
       {look.since !== null ? (
         <>
-          {timingWords(look)} <span className="font-mono tabular text-ink">{timecode(look.since, false)}</span>
+          {getTimeBase() === "wall" ? timingWords(look).replace(/ at$/, "") : timingWords(look)} <When t={look.since} inline className="font-mono text-ink" />
         </>
       ) : look.phase === "running" ? (
         "In progress"
@@ -288,7 +290,7 @@ function Why({ entity }: { entity: AnyRef }) {
       </p>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-mono text-[11px] text-ink-subtle tabular">
-          {latest.event.type}, {timecode(latest.t)}
+          {latest.event.type}, <When t={latest.t} precision="second" />
         </span>
         {latest.event.schema_version === 3 ? <AuthorityBadge authority={latest.authority} /> : null}
         {latest.event.schema_version === 3 && timeCaveatWords(latest.precision) ? <span className="text-caption text-ink-subtle">{timeCaveatWords(latest.precision)}</span> : null}

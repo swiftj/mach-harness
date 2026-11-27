@@ -5,7 +5,7 @@
  * risers, and the supervisor's conduits lit for each running execution.
  */
 import { ArtifactCard, DependencyLink, Escalation, Packet, RetryLoop, RoutePath, fc, pointAlong, project, round, type Vec3 } from "@mach/ui";
-import { ref, type CellState } from "../sim";
+import { nextRoundAfter, ref, roundLimit, type CellState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, useNowKeyed } from "./context";
 import { animating, anim, legsInFlight, onFloor, q, workStation } from "./derive";
@@ -89,14 +89,17 @@ export function Transit() {
     });
     if (i < 0 || i < cell.reviews.length - 1) return [];
     const r = cell.reviews[i]!;
-    return [{ cell, bay, r, p: q(anim("verifyReturn", t - (r.decidedAt as number), reduced)) }];
+    // No return to build when no round follows: the rejected round was the last, or a person must decide.
+    const next = nextRoundAfter(cell, r.round);
+    if (next === null) return [];
+    return [{ cell, bay, r, next, p: q(anim("verifyReturn", t - (r.decidedAt as number), reduced)) }];
   });
 
   return (
     <g>
-      {returns.map(({ cell, bay, r, p }) => (
+      {returns.map(({ cell, bay, next, p }) => (
         <g key={`ret-${cell.ticketId}`} style={{ opacity: isDimmed(highlight, ref.cell(cell.ticketId)) ? 0.28 : 1 }}>
-          <RetryLoop from={L.review.entry} to={{ ...bay.pads.build, z: FLOOR_Z }} round={r.round + 1} progress={p} lift={92} lod={lod} />
+          <RetryLoop from={L.review.entry} to={{ ...bay.pads.build, z: FLOOR_Z }} round={next} maxRounds={roundLimit(cell)} progress={p} lift={92} lod={lod} />
         </g>
       ))}
       {legs.map(({ leg, p }) => {

@@ -12,6 +12,7 @@
     "./api": "./src/api/index.ts",
     "./sections": "./src/spec/sections.ts",
     "./ids": "./src/api/ids.ts",
+    "./datetime": "./src/lib/datetime.ts",
     "./graph": "./src/graph/index.ts",
     "./factory": "./src/factory/index.ts",
     "./tokens": "./src/tokens/tokens.ts",

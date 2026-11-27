@@ -9,7 +9,8 @@ import { useScene, useSceneStore } from "../../scene";
 import { ActorGlyph, CellGlyph, SliceGlyph } from "../glyphs";
 import { indexFor, lastAtOrBefore, quotingKindOf } from "../history";
 import { ConnectionFacts } from "../SourceBadge";
-import { ACTOR_WORDS, schedulerLook, stageLook, timecode } from "../vocab";
+import { ACTOR_WORDS, schedulerLook, stageLook, timecodeInline } from "../vocab";
+import { When } from "../When";
 import { mayBeUnderReported, recordedCost } from "./anatomies";
 import { Facts, NotRecorded, RefLink, RefList, Section } from "./parts";
 import { FreeText, FreeTextLabel, KindWords } from "./FreeText";
@@ -44,7 +45,7 @@ export function RunNow() {
         {chapter && index.storyboard ? (
           <>
             <p className="mt-3 text-caption text-ink-subtle tabular">
-              Chapter {n} of {index.landmarks.length}, from {timecode(chapter.t, false)}
+              Chapter {n} of {index.landmarks.length}, from <When t={chapter.t} inline />
             </p>
             <h2 className="mt-0.5 font-sans text-title-3 font-bold text-ink">
               <KindWords kind={chapter.eventType} text={chapter.title} />
@@ -53,7 +54,7 @@ export function RunNow() {
           </>
         ) : chapter ? (
           <>
-            <p className="mt-3 text-caption text-ink-subtle tabular">Last landmark, {timecode(chapter.t, false)} UTC</p>
+            <p className="mt-3 text-caption text-ink-subtle tabular">Last landmark, <When t={chapter.t} inline /></p>
             <h2 className="mt-0.5 font-sans text-title-3 font-bold text-ink">
               <KindWords kind={chapter.eventType} text={chapter.title} />
             </h2>
@@ -61,7 +62,7 @@ export function RunNow() {
         ) : null}
         {moment && moment.id !== chapter?.id ? (
           <div className="mt-4 border-l-2 border-factory-select pl-3">
-            <p className="font-mono text-[11px] text-ink-subtle tabular">Latest significant moment, {timecode(moment.t)}</p>
+            <p className="font-mono text-[11px] text-ink-subtle tabular">Latest significant moment, <When t={moment.t} precision="second" inline /></p>
             <p className="mt-0.5 text-body-sm text-ink">
               <KindWords kind={source === "simulation" ? null : quotingKindOf(log, moment)} text={moment.text} />
             </p>
@@ -243,7 +244,7 @@ function Actors() {
         {(["supervisor", "scheduler"] as const).map((id) => {
           const a = actors[id];
           return (
-            <RefLink key={id} to={ref.actor(id)} glyph={<ActorGlyph actor={id} size={20} />} detail={a.lastActedAt !== null ? `${a.acts} acts, last ${timecode(a.lastActedAt, false)}` : "not yet"}>
+            <RefLink key={id} to={ref.actor(id)} glyph={<ActorGlyph actor={id} size={20} />} detail={a.lastActedAt !== null ? `${a.acts} acts, last ${timecodeInline(a.lastActedAt)}` : "not yet"}>
               {ACTOR_WORDS[id].role} {a.lastKind ? <span className="font-mono text-[12px] text-ink-muted">{a.lastKind}</span> : null}
             </RefLink>
           );

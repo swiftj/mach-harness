@@ -15,8 +15,14 @@ export interface Timing {
 }
 
 /** A cell is finished when it is merged, at the merge, not at the moment it was opened. */
-export function cellTiming(cell: Pick<CellState, "merged" | "openedAt">): Timing {
-  return cell.merged ? { phase: "finished", since: cell.merged.at } : { phase: "running", since: cell.openedAt };
+export function cellTiming(cell: Pick<CellState, "merged" | "openedAt"> & Partial<Pick<CellState, "stage" | "stageHistory">>): Timing {
+  if (cell.merged) return { phase: "finished", since: cell.merged.at };
+  // Stopped for a person: not in progress. Since when it stopped, as recorded.
+  if (cell.stage === "blocked") {
+    const at = [...(cell.stageHistory ?? [])].reverse().find((h) => h.stage === "blocked")?.at ?? null;
+    return { phase: "running", since: at, sinceWord: "Stopped for a person since" };
+  }
+  return { phase: "running", since: cell.openedAt };
 }
 
 /** A station visit is finished when the cell left it, at that moment. */

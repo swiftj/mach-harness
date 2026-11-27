@@ -14,8 +14,7 @@ import type { AnalyticsArea, AnalyticsFilters, AnalyticsWindow } from "../../sce
 import type { SceneSource } from "../../sim/provenance";
 import type { AnalyticsSource } from "../data/types";
 import type { AreaSource, Pick } from "../ui/types";
-import { utcClock } from "../../shell/time";
-import { dayLabel } from "../model/scale";
+import { wallMoment } from "../../shell/time";
 
 export const DAY_MS = 86_400_000;
 const PRESET_DAYS = { "7d": 7, "14d": 14, "28d": 28 } as const;
@@ -108,8 +107,8 @@ export interface AsOfFacts {
   readonly window: AnalyticsWindow;
 }
 
-/** A moment to the second: "4 Nov 14:20:05 UTC" (`dayLabel` and `utcClock`). */
-export const momentWords = (t: number): string => `${dayLabel(t)} ${utcClock(t)} UTC`;
+/** A moment to the second, with its date, in the person's locale and time zone, for a sentence: "today 14:20:05", "4 Nov 14:20:05". */
+export const momentWords = (t: number): string => wallMoment(t, "second").inline;
 
 /** The caption: which history the figures describe, in words. The complete recorded history, or a selected window. */
 export function asOfWords(f: AsOfFacts): string {

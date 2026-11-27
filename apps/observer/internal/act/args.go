@@ -25,8 +25,16 @@ var (
 var Options = map[string]bool{
 	"approve": true, "send-back": true, "merge": true, "accept": true, "exception": true, "replan": true,
 	"set-test-command": true, "retry": true, "run": true, "revise": true, "answers": true, "abandon": true,
-	"take-over": true,
+	"take-over": true, "carry-on": true,
 }
+
+// Takes are the optional free-text inputs an option may take (decide --json's `takes`), each sent as
+// --<name>=<text>. Only "guidance" exists: what the builder should do differently, for carry-on.
+var Takes = map[string]bool{"guidance": true}
+
+// TakesKey is how the server's list of what was offered records that an option takes an input
+// (option keys never hold "?").
+func TakesKey(option, name string) string { return option + "?" + name }
 
 // LongOptions may run the project's tests or a merge: they are given the longer time limit.
 var LongOptions = map[string]bool{"merge": true, "set-test-command": true, "abandon": true, "approve": true}
@@ -38,6 +46,7 @@ const (
 	MaxReason    = 4000
 	MaxTestCmd   = 1000
 	MaxAnswer    = 4000
+	MaxGuidance  = 4000
 	MaxADRs      = 20
 	MaxQuestions = 30
 	MaxBodyBytes = 256 << 10
@@ -57,6 +66,8 @@ type Body struct {
 	ADRs    []string `json:"adrs"`
 	TestCmd *string  `json:"test_cmd"`
 	Answers []Answer `json:"answers"`
+	// Guidance is what the builder should do differently, in the person's words (optional; carry-on).
+	Guidance *string `json:"guidance"`
 }
 
 // Decision is one person's decision on one ticket, as the page asked for it.
@@ -171,6 +182,15 @@ func (d Decision) Check(allowed func(ticket, option string) bool) error {
 			return err
 		}
 	}
+	if d.Guidance != nil {
+		// Only an option that takes it: carry-on, or one the last list offered with takes: ["guidance"].
+		if d.Option != "carry-on" && (allowed == nil || !allowed(d.Ticket, TakesKey(d.Option, "guidance"))) {
+			return invalid("%q takes no guidance. Read the list again.", d.Option)
+		}
+		if err := checkText("What the builder should do differently", *d.Guidance, MaxGuidance, true); err != nil {
+			return err
+		}
+	}
 	if len(d.ADRs) > MaxADRs {
 		return invalid("At most %d architecture decisions at once.", MaxADRs)
 	}
@@ -229,6 +249,9 @@ func (d Decision) Argv(answersFile string) []string {
 	}
 	if answersFile != "" {
 		argv = append(argv, flag("answers-file", answersFile))
+	}
+	if d.Guidance != nil {
+		argv = append(argv, flag("guidance", *d.Guidance))
 	}
 	return append(argv, "--via=floor", "--json")
 }
