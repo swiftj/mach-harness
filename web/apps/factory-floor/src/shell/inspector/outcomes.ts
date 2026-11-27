@@ -240,6 +240,7 @@ export const GATE_REASON_WORDS: Readonly<Record<string, string>> = {
   "git-stage-failed": "git could not stage the task's files",
   "unknown-commit": "the commit named does not exist",
   "findings-missing": "the findings file was not found",
+  "rounds-missing": "part of MACH is missing, so the round limit could not be checked",
   "bad-ticket-id": "the ticket ID is not usable",
   "adr-helper-missing": "the architecture-decision helper is not installed",
   "scan-helper-missing": "the secrets scan helper is not installed",
