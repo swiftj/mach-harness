@@ -1211,6 +1211,26 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 	if round != nil {
 		c.Round = round
 	}
+	// A person carried the ticket on (data.carried_on): the round shown from now on and the new limit.
+	var carried struct {
+		CarriedOn *struct {
+			Round *int64 `json:"round"`
+			Max   *int64 `json:"max"`
+			By    string `json:"by"`
+		} `json:"carried_on"`
+	}
+	if e.DataAs(&carried); carried.CarriedOn != nil {
+		co := carried.CarriedOn
+		if co.Round != nil {
+			c.Round = co.Round
+		}
+		if co.Max != nil {
+			c.RoundMax = co.Max
+		}
+		if len(c.CarriedOn) < maxListPerCell {
+			c.CarriedOn = append(c.CarriedOn, &CarriedOn{Round: co.Round, Max: co.Max, By: co.By, At: st})
+		}
+	}
 	switch e.Type {
 	case "station.entered":
 		var d struct {

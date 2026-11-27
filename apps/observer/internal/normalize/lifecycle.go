@@ -223,6 +223,48 @@ func (l *Lifecycle) Line(line []byte, r Read) []*event.Event {
 	return out
 }
 
+// CarriedOnOutcome is the outcome (or reason code) a station records when a person carries a ticket
+// on: one more round by a person's decision ("person-decision"), or a fresh allowance when a person
+// starts the Factory or pulls the ticket by hand ("person-start").
+const CarriedOnOutcome = "carried-on-by-person"
+
+// carriedOn keeps what a carry-on record says of the rounds: the round shown from now on, the new
+// limit, and who gave them. Set as data.carried_on only on such a record; absent on every other.
+func carriedOn(d, in map[string]any, used map[string]bool) {
+	outcome, _ := in["outcome"].(string)
+	reason, _ := in["reason_code"].(string)
+	nested, isNested := in["carried_on"].(map[string]any)
+	if outcome != CarriedOnOutcome && reason != CarriedOnOutcome && !isNested {
+		return
+	}
+	src := in
+	if isNested {
+		used["carried_on"] = true
+		src = nested
+	}
+	num := func(keys ...string) any {
+		for _, k := range keys {
+			if v, ok := src[k]; ok {
+				if !isNested {
+					used[k] = true
+				}
+				if n, ok := redact.Int(v); ok && n >= 1 && n <= 99 {
+					return n
+				}
+			}
+		}
+		return nil
+	}
+	out := map[string]any{"round": num("round", "new_round"), "max": num("max", "max_rounds", "new_max"), "by": nil}
+	if v, ok := src["by"]; ok {
+		if !isNested {
+			used["by"] = true
+		}
+		out["by"] = enum(v, "person-start", "person-decision")
+	}
+	d["carried_on"] = out
+}
+
 // laneOf is a lane's name as the build station writes it (L1, L2, ...), or null.
 func laneOf(v any) any {
 	if s, ok := v.(string); ok && laneRe.MatchString(s) {
@@ -298,6 +340,7 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		}
 		d["head"] = commitOrNil(get("head"))
 		get("round")
+		carriedOn(d, in, used)
 		d["counts"] = counts(in, used)
 		l.visits[vid] = &visit{enteredMS: at, eventID: ev.ID, items: map[string]bool{}}
 	case "station.exited":
@@ -332,6 +375,7 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 			d["widened"] = boolOrNil(get("widened"))
 			d["widened_rule"] = enum(get("widened_rule"), SmallRules...)
 		}
+		carriedOn(d, in, used)
 		d["counts"] = counts(in, used)
 	case "gate.evaluated":
 		gate, _ := get("gate").(string)
@@ -372,6 +416,7 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		if _, ok := in["lane"]; ok && station == "build" {
 			d["lane"] = laneOf(get("lane"))
 		}
+		carriedOn(d, in, used)
 		d["counts"] = counts(in, used)
 		if s, ok := subject.(string); ok && strings.Contains(gate, "review") {
 			if seat := enum(s, seats...); seat != nil {

@@ -599,7 +599,7 @@ func CellSummary(c *Cell) map[string]any {
 		"stage_source": c.StageSource, "risk": orNil(c.Risk), "app_type": orNil(c.AppType),
 		"plan": map[string]any{"app_type": orNil(c.AppType), "risk": orNil(c.Risk), "contracts": c.Contracts, "tasks": c.TasksPlanned,
 			"recorded_by": orNil(c.AppTypeSource)}, "created_at": TV(created), "updated_at": TV(c.Updated),
-		"current_visit": c.CurrentVisit, "round": c.Round, "visits": len(visits), "last_outcome": last, "lifecycle": c.Lifecycle,
+		"current_visit": c.CurrentVisit, "round": c.Round, "round_max": c.RoundMax, "visits": len(visits), "last_outcome": last, "lifecycle": c.Lifecycle,
 		"archived": c.Archived, "merged": c.Merge != nil, "executions": nonNilS(c.Executions),
 		"abandoned": c.Abandoned != nil, "reissued_as": orNil(c.ReissuedAs), "earlier_runs": EarlierRuns(c),
 		"run_records_unattributed": c.RunRecordsUnattributed}

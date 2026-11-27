@@ -231,7 +231,7 @@ export function selectable(entity: AnyRef | null): EntityRef | null {
 export const ACTOR_WORDS: Record<ActorId, { role: string; does: string }> = {
   supervisor: {
     role: "Line supervisor",
-    does: "Ticks once a minute: reads each cell's stage, claims and starts executions, records how they ended, and decides what to start next.",
+    does: "Runs while a Factory runs here (/mach pull starts it). Ticks once a minute: reads each cell's stage, claims and starts executions, records how they ended, and decides what to start next. A ticket stopped for a person waits until a person carries it on with a fix, or starts the Factory (which gives a ticket stopped for its rounds a fresh set of rounds); the supervisor then takes it up again at the build step.",
   },
   scheduler: {
     role: "Scheduler",

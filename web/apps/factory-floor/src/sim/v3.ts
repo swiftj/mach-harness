@@ -136,6 +136,13 @@ export interface V3Ids {
 
 type ByRole = "engineer" | "supervisor" | "person";
 type Counts = Readonly<Record<string, number | boolean>>;
+
+/** A person carried the ticket on past its stop (the station's outcome `carried-on-by-person`): the round shown from then on, the new limit, and who gave them. */
+export interface CarriedOnData {
+  readonly round: number | null;
+  readonly max: number | null;
+  readonly by: "person-start" | "person-decision" | null;
+}
 type Stage = CellStage | "spec-open";
 
 /** Revision 7: the routing sheet's stop codes (run.py `needs`, as of M14). A later code arrives as null. */
@@ -172,13 +179,13 @@ export interface V3DataMap {
   "recovery.started": { kind: "ended-while-unwatched" | "still-running" | "claim-never-started" | "outcome-unknown" | "took-over-from-dead-supervisor" };
   "execution.completed": { stage: Stage | null; next: StepAction | null; waiting_for: string | null; /** Revision 7: waiting_for as a known stop code. */ needs?: StopCode | null; how: string | null; seen_to_end: boolean; cost_usd: number | null; refused_tools: string[]; exit_code?: number | null };
   "execution.failed": { stage: Stage | null; next: StepAction | null; how: string | null; claude_error: string | null; exit_code: number | null; attempt: number; not_progressing?: "workflow-stuck" | "same-refusal" | null };
-  "station.entered": { station: StationId; stage: Stage | null; action: StepAction | null; resumed: boolean; unclosed_visit: string | null; head: string | null; counts: Counts };
+  "station.entered": { station: StationId; stage: Stage | null; action: StepAction | null; resumed: boolean; unclosed_visit: string | null; head: string | null; counts: Counts; carried_on?: CarriedOnData | null };
   /** Revision 2: on the plan's exit, `app_type` and `risk` (the plan's own facts); `counts.contracts` and `counts.tasks`. */
   "station.exited": { station: StationId; outcome: string; stage: Stage | null; duration_ms: number | null; closed_by: "cleanup" | null; head: string | null; counts: Counts; app_type?: string | null; risk?: Risk | null;
     /** Revision 8 (M18), on the groom exit of a small change only: the kind, whether it became a full slice, and the rule's code. */
-    kind?: "small" | null; widened?: boolean | null; widened_rule?: string | null };
+    kind?: "small" | null; widened?: boolean | null; widened_rule?: string | null; carried_on?: CarriedOnData | null };
   /** Revision 9 (M22): `lane` on a build gate about one lane (build.join's lane-set-aside) only. */
-  "gate.evaluated": { gate: string; verdict: "passed" | "refused" | "overridden"; reason_code: string | null; subject: string | null; status: "PASS" | "FAIL_WITH_EVIDENCE" | "INCOMPLETE_EVIDENCE" | null; audit_tier: string | null; counts: Counts; lane?: string | null };
+  "gate.evaluated": { gate: string; verdict: "passed" | "refused" | "overridden"; reason_code: string | null; subject: string | null; status: "PASS" | "FAIL_WITH_EVIDENCE" | "INCOMPLETE_EVIDENCE" | null; audit_tier: string | null; counts: Counts; lane?: string | null; carried_on?: CarriedOnData | null };
   /** Revision 9 (M22): `lane` on a task built in a lane only (its commit is then the lane's own commit); `task_id` may be J-T01, the join's task. */
   "build.task_completed": { task_id: string; kind: "test" | "impl" | "contract" | "refactor" | "docs"; step: "red" | "green" | "done"; first_run: "pass" | "fail" | "not-run" | null; suite: "unknown" | "red" | "green" | null; commit: string | null; lane?: string | null };
   "verify.check_recorded": { target_id: string; target_kind: "scenario" | "matrix rule" | "holdout" | "design mock"; result: "pass" | "fail"; evidence: Array<{ file: string; sha256: string | null; bytes?: number | null }>; rerecorded: boolean };
@@ -277,6 +284,8 @@ export interface ObserverSnapshotState {
     readonly risk?: string | null;
     readonly current_visit?: string | null;
     readonly rounds?: number | null;
+    /** The round limit a person's carry-on set (the observer's `round_max`); null: the configured one. */
+    readonly round_max?: number | null;
     /** Observer M6.2: the cell's app type, and the plan's facts (`plan {app_type, risk, contracts, tasks, recorded_by}`). */
     readonly app_type?: string | null;
     readonly plan?: { readonly app_type: string | null; readonly risk: string | null; readonly contracts: number | null; readonly tasks: number | null; readonly recorded_by: string | null } | null;

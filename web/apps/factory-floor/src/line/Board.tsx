@@ -35,6 +35,11 @@ export function markerLabel(row: LineRow): string {
   return STATE_WORDS[row.state];
 }
 
+/** "Sent back once", "Sent back twice", "Sent back 3 times": under a stopped ticket's marker. */
+export function sentBackTimesWords(times: number): string {
+  return `Sent back ${timesWords(times)}`;
+}
+
 /** The line under a marker: how long, in plain words, and what it is waiting on. */
 export function underWords(row: LineRow, now: number): string | null {
   const since = row.since !== null ? duration(Math.max(0, now - row.since)) : null;
@@ -48,7 +53,9 @@ export function underWords(row: LineRow, now: number): string | null {
       if (row.stop && row.detail) return since ? `${row.detail}, ${since}` : row.detail;
       return since ? `waiting ${since}` : "waiting";
     case "stopped":
-      return `${row.roundsUsed} round${row.roundsUsed === 1 ? "" : "s"} used`;
+      // How often it was sent back, counted across every round a person gave it; the rounds when it never was.
+      if (row.sentBack && row.sentBack.times > 0) return sentBackTimesWords(row.sentBack.times);
+      return row.roundsUsed > 0 ? `${row.roundsUsed} round${row.roundsUsed === 1 ? "" : "s"} used` : null;
     case "landed":
       if (!row.finished) return "merged, waiting for cleanup";
       return since ? `finished ${since} ago` : "finished";
@@ -78,38 +85,80 @@ function StationHeading({ column, stat, selected, onPick }: { column: number; st
   );
 }
 
-function Lane({ row, now }: { row: LineRow; now: number }) {
+/**
+ * Whether a row draws its send-back arc: only where both ends are drawn, the marker at the station the
+ * work went back to and the sending station's node. A stopped ticket draws none: the words under its
+ * marker say how often it was sent back, and its panel lists every round.
+ */
+export function drawsSentBack(row: Pick<LineRow, "state" | "sentBack" | "column" | "beforeMerge">): boolean {
+  return row.sentBack !== null && row.state !== "stopped" && !row.beforeMerge && row.sentBack.to === row.column && row.sentBack.from !== row.column;
+}
+
+function Lane({ row, now, onStopped }: { row: LineRow; now: number; onStopped?: (row: LineRow) => void }) {
   const at = row.beforeMerge ? boundary(row.column) : centre(row.column);
   const first = row.passed[0];
   const under = underWords(row, now);
+  const opens = row.state === "stopped" && onStopped;
   return (
-    <div className="relative h-[76px] min-w-0" aria-hidden="true">
+    <div className="relative h-[76px] min-w-0">
       {/* The belt: dotted, across every station. */}
-      <span className="absolute top-[34px] h-0 border-t-2 border-dotted border-factory-hatch" style={{ left: `${centre(0) - 3}%`, right: `${100 - centre(COLS - 1) - 3}%` }} />
+      <span aria-hidden="true" className="absolute top-[34px] h-0 border-t-2 border-dotted border-factory-hatch" style={{ left: `${centre(0) - 3}%`, right: `${100 - centre(COLS - 1) - 3}%` }} />
       {/* Done: solid from the first station passed to the marker. */}
-      {first !== undefined ? <span className="absolute top-[33px] h-[3px] rounded-full bg-factory-pass" style={{ left: `${centre(first)}%`, width: `${Math.max(0, at - centre(first))}%` }} /> : null}
+      {first !== undefined ? <span aria-hidden="true" className="absolute top-[33px] h-[3px] rounded-full bg-factory-pass" style={{ left: `${centre(first)}%`, width: `${Math.max(0, at - centre(first))}%` }} /> : null}
       {row.passed.map((c) => (
-        <span key={c} className="absolute top-[27px] -translate-x-1/2" style={{ left: `${centre(c)}%` }}>
+        <span key={c} aria-hidden="true" className="absolute top-[27px] -translate-x-1/2" style={{ left: `${centre(c)}%` }}>
           <PassedNode />
         </span>
       ))}
-      {row.sentBack ? <SentBack from={row.sentBack.from} to={row.sentBack.to} times={row.sentBack.times} /> : null}
+      {row.sentBack && drawsSentBack(row) ? <SentBack from={row.sentBack.from} to={row.sentBack.to} times={row.sentBack.times} /> : null}
       <span className="absolute top-[21px] flex -translate-x-1/2 flex-col items-center" style={{ left: `${at}%` }} data-marker={row.state}>
-        <Marker state={row.state} label={markerLabel(row)} />
-        {under ? <span className="mt-0.5 whitespace-nowrap text-[12px] text-ink-muted">{under}</span> : null}
+        {opens ? (
+          // A stopped box opens what stopped it: the ticket's panel, at "What stopped it".
+          <button
+            type="button"
+            className="rounded-xs outline-offset-2"
+            aria-label={`${row.ticketId}: stopped. Show what stopped it and how to carry it on`}
+            data-stopped-open={row.ticketId}
+            onClick={(e) => {
+              e.stopPropagation();
+              onStopped(row);
+            }}
+          >
+            <Marker state={row.state} label={markerLabel(row)} />
+          </button>
+        ) : (
+          <span aria-hidden="true">
+            <Marker state={row.state} label={markerLabel(row)} />
+          </span>
+        )}
+        {under ? (
+          <span aria-hidden="true" className="mt-0.5 whitespace-nowrap text-[12px] text-ink-muted" data-under={row.state}>
+            {under}
+          </span>
+        ) : null}
       </span>
     </div>
   );
 }
 
-/** The dashed arc from the station that sent work back to the one it went back to, with how many times. */
+/**
+ * The dashed arc from the station that sent work back to the one it went back to, with how many times:
+ * a node at the sending station, an arrowhead at the marker it went back to.
+ */
 function SentBack({ from, to, times }: { from: number; to: number; times: number }) {
   const left = centre(Math.min(from, to));
   const width = Math.abs(centre(from) - centre(to));
+  const back = from > to; // right to left, the usual case
   return (
-    <span className="absolute top-[4px] h-[26px]" style={{ left: `${left}%`, width: `${width}%` }} data-sent-back={times}>
+    <span aria-hidden="true" className="absolute top-[4px] h-[26px]" style={{ left: `${left}%`, width: `${width}%` }} data-sent-back={times}>
       <svg className="absolute inset-0 h-full w-full overflow-visible text-factory-fail" viewBox="0 0 100 26" preserveAspectRatio="none">
-        <path d="M100 24 C100 6, 0 6, 0 20" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeDasharray: "5 4", vectorEffect: "non-scaling-stroke" }} />
+        <path d={back ? "M100 24 C100 6, 0 6, 0 17" : "M0 24 C0 6, 100 6, 100 17"} style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeDasharray: "5 4", vectorEffect: "non-scaling-stroke" }} />
+      </svg>
+      {/* The sending station's node: a small ring where the arc starts. */}
+      <span className="absolute top-[18px] size-[9px] -translate-x-1/2 rounded-full border-[1.6px] border-factory-fail bg-factory-plate-top" style={{ left: back ? "100%" : "0%" }} data-sent-back-from="" />
+      {/* The arrowhead, onto the marker it went back to. */}
+      <svg className="absolute top-[14px] -translate-x-1/2 text-factory-fail" style={{ left: back ? "0%" : "100%" }} width="10" height="7" viewBox="0 0 10 7">
+        <path d="M1 1 L5 6 L9 1" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" }} />
       </svg>
       <span className="absolute -top-[6px] left-1/2 -translate-x-1/2 whitespace-nowrap rounded-xs bg-factory-plate-top px-1 text-[11.5px] font-semibold text-factory-fail">sent back {timesWords(times)}</span>
     </span>
@@ -131,9 +180,11 @@ export interface BoardProps {
   readonly empty: { readonly title: string; readonly body: string };
   /** M22: each ticket built in lanes, what its row shows of them (src/line/lanesModel.ts); absent for every other ticket. */
   readonly lanes?: ReadonlyMap<string, LaneLine>;
+  /** A stopped box was pressed: show what stopped the ticket. Absent: the box is drawn only. */
+  readonly onStopped?: (row: LineRow) => void;
 }
 
-export function Board({ rows, stats, now, landedHidden, selectedTicket, selectedColumn, onTicket, onStation, onRecord, empty, lanes }: BoardProps) {
+export function Board({ rows, stats, now, landedHidden, selectedTicket, selectedColumn, onTicket, onStation, onRecord, empty, lanes, onStopped }: BoardProps) {
   const onRowKey = useCallback(
     (e: KeyboardEvent<HTMLButtonElement>, row: LineRow) => {
       if (e.key === "Enter") {
@@ -216,7 +267,7 @@ export function Board({ rows, stats, now, landedHidden, selectedTicket, selected
                   <EpicLine row={row} labelled className="mt-0.5 line-clamp-1 text-caption text-ink-muted" />
                 </div>
                 <div className={cn("col-span-7 min-w-0", selected ? "bg-surface/60" : "group-hover:bg-surface/40")}>
-                  <Lane row={row} now={now} />
+                  <Lane row={row} now={now} onStopped={onStopped} />
                   {lanes?.get(row.ticketId) ? <LanesStrip ticketId={row.ticketId} line={lanes.get(row.ticketId)!} offset={BUILD_START} /> : null}
                 </div>
               </li>

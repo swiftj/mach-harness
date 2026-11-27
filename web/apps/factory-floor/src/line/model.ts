@@ -19,8 +19,10 @@
  * Finished tickets (landed and cleaned up, or closed) are listed after the rest, the newest few only.
  */
 import {
-  MAX_ROUNDS,
   MODELS,
+  carryOns,
+  roundLimit,
+  roundNow,
   capacityWaitOf,
   cellStopOf,
   mockWaitsOf,
@@ -166,8 +168,10 @@ export interface LineRow {
   /** M15: the merge-time recheck sent it back this many times (each a repeat review round, no judging round used). */
   readonly rechecks?: number;
   readonly times: readonly StationTime[];
-  /** Judging rounds started (verification or review), of MAX_ROUNDS. */
+  /** Judging rounds started (verification or review) in the current allowance, of `roundLimit`. */
   readonly roundsUsed: number;
+  /** The round limit in force (sim/rounds.ts): the configured one, or the one a person's carry-on set. */
+  readonly roundLimit?: number;
   /** Recorded spend across its executions; null when none is recorded. `partial`: a record says it may be under-reported, or only some executions recorded one. */
   readonly cost: { readonly usd: number; readonly partial: boolean } | null;
   /** When its first record was made (for a stable order). */
@@ -200,12 +204,17 @@ export function stationTimes(cell: CellState, now: number): StationTime[] {
   return out;
 }
 
-/** The judging rounds started: the highest round any verification or review began. */
+/**
+ * The judging rounds started in the current allowance: the highest round a verification or review began
+ * since a person last gave the ticket a fresh set of rounds (all of them when none did), never above the
+ * limit in force.
+ */
 export function roundsUsed(cell: CellState): number {
+  const fresh = carryOns(cell).filter((c) => c.by === "person-start").at(-1)?.at ?? Number.NEGATIVE_INFINITY;
   let n = 0;
-  for (const v of cell.verifications) n = Math.max(n, v.round);
-  for (const r of cell.reviews) n = Math.max(n, r.round);
-  return n;
+  for (const v of cell.verifications) if (v.startedAt >= fresh) n = Math.max(n, v.round);
+  for (const r of cell.reviews) if (r.startedAt >= fresh) n = Math.max(n, r.round);
+  return Math.min(n, roundLimit(cell));
 }
 
 /** The recorded spend of an execution, or null (never 0 for "not recorded"). */
@@ -402,6 +411,7 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
     risk: cell.meta.unknown.includes("risk") ? null : cell.risk,
     times: stationTimes(cell, now),
     roundsUsed: roundsUsed(cell),
+    roundLimit: roundLimit(cell),
     cost: ticketCost(scene, cell.ticketId),
     openedAt: cell.openedAt,
     sentBack: sentBackOf(cell),
@@ -455,8 +465,8 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
     const why = parked
       ? `${parkedWords(parked.notProgressing)}.`
       : lastReview?.outcome === "ESCALATE"
-        ? `Review rejected it in round ${lastReview.round}, the last of ${MAX_ROUNDS}. The line has stopped work on it.`
-        : `It used its ${MAX_ROUNDS} judging rounds without passing. The line has stopped work on it.`;
+        ? `Review rejected it in round ${Math.min(lastReview.round, roundLimit(cell))}, the last of ${roundLimit(cell)}. The line has stopped work on it.`
+        : `It used its ${roundLimit(cell)} judging rounds without passing. The line has stopped work on it.`;
     return {
       ...base,
       state: "stopped",
@@ -467,7 +477,7 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
       since: attention?.at ?? [...cell.stageHistory].reverse().find((h) => h.stage === "blocked")?.at ?? null,
       held: null,
       why,
-      needs: "Read why, then re-plan it, fix it by hand, or abandon it.",
+      needs: "Read what failed, then carry it on with a fix: the builder takes it up again at the build step. Or re-plan it, fix it by hand, or abandon it.",
       command: command("decide", cell.ticketId),
     };
   }
@@ -593,7 +603,7 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
       since: open.enteredAt,
       held: null,
       why: revision ?? `${(LINE_STATIONS[column] as LineStation).worker} at work. ${(LINE_STATIONS[column] as LineStation).does}`,
-      needs: revision && cell.round >= MAX_ROUNDS ? `Nothing yet. This is round ${cell.round}, the last: another rejection stops the ticket for you.` : "Nothing. It moves on by itself.",
+      needs: revision && roundNow(cell) >= roundLimit(cell) ? `Nothing yet. This is round ${roundNow(cell)} of ${roundLimit(cell)}, the last: another rejection stops the ticket for you.` : "Nothing. It moves on by itself.",
       command: command("explain", cell.ticketId),
     };
   }

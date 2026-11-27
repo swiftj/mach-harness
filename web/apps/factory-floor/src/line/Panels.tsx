@@ -86,6 +86,7 @@ export function TicketPanel({
   onRecord,
   onFloor,
   decide,
+  stopped,
 }: {
   row: LineRow;
   now: number;
@@ -96,6 +97,8 @@ export function TicketPanel({
   onFloor: () => void;
   /** M23: where the person can decide here, the decision part (src/needs/Decide.tsx) in place of the command to copy. */
   decide?: ReactNode;
+  /** A ticket stopped for a person: what stopped it and its decision (src/stopped), in place of "Why it is here" and the decision. */
+  stopped?: ReactNode;
 }) {
   const station = LINE_STATIONS[row.column]!.name;
   return (
@@ -109,6 +112,10 @@ export function TicketPanel({
         <StatePill state={row.state} />
         <span className="text-body-sm text-ink-muted">{row.beforeMerge ? `at ${station}, before Merge` : `at ${station}`}</span>
       </p>
+      {stopped ? (
+        <div className="mt-5">{stopped}</div>
+      ) : (
+      <>
       <Part title="Why it is here">
         <p className="text-body-sm text-ink">{row.why}</p>
         {row.held?.kind === "supervisor" ? (
@@ -137,6 +144,8 @@ export function TicketPanel({
         {row.stop === "policy-owner" ? <p className="mt-1.5 text-caption text-ink-muted">Fill in the policy's ID and the owner's own words; only the owner accepts a concern.</p> : null}
       </Part>
       )}
+      </>
+      )}
       <Part title="Where the time went">
         <TimeBars times={row.times} />
       </Part>
@@ -163,7 +172,7 @@ export function TicketPanel({
             ...(row.smallChange ? ([["Small change", row.smallChange.widened ? smallChangeWords(row.smallChange) : "yes"]] as const) : []),
             ["Jira", row.jira ? <span key="j" className="font-mono text-[13px]">{row.jira}</span> : "not recorded"],
             ["Risk", row.risk ?? "not recorded"],
-            ["Rounds used", `${row.roundsUsed} of ${MAX_ROUNDS}`],
+            ["Rounds used", `${row.roundsUsed} of ${row.roundLimit ?? MAX_ROUNDS}`],
             ...(row.rechecks ? ([["Rechecked", `the merge-time check sent it back ${timesWords(row.rechecks)}; no judging round used`]] as const) : []),
             ["Change record", row.changeRecord ? <span key="c" className="break-all font-mono text-[13px]">{row.changeRecord}</span> : "not recorded"],
             ["Cost", costWords(row.cost)],

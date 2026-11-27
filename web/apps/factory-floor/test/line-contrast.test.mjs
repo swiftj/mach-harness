@@ -43,5 +43,5 @@ test("the Line sets no text in factory-ink-soft", () => {
 test("the station subtitles and the words under a marker are ink-muted", () => {
   assert.match(board, /className="w-full truncate text-caption text-ink-muted">\{models \?\? station\.worker\}/);
   assert.match(board, /className="w-full truncate text-caption text-ink-muted">\{stat\?\.typicalMs/);
-  assert.match(board, /text-\[12px\] text-ink-muted">\{under\}/);
+  assert.match(board, /text-\[12px\] text-ink-muted" data-under=\{row\.state\}>\s*\{under\}/);
 });

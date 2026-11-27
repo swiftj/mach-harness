@@ -126,7 +126,7 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
             <p className="mt-2 flex flex-wrap items-center gap-2 text-body-sm text-ink-muted">
               <StatePill state={row.state} />
               <span>
-                {row.risk ? `${row.risk} risk` : "Risk not recorded"}. Rounds used: {row.roundsUsed} of {MAX_ROUNDS}. Cost: {costWords(row.cost)}.
+                {row.risk ? `${row.risk} risk` : "Risk not recorded"}. Rounds used: {row.roundsUsed} of {row.roundLimit ?? MAX_ROUNDS}. Cost: {costWords(row.cost)}.
               </span>
             </p>
             <p className="mt-1 text-body-sm text-ink-muted" data-record-ids="">

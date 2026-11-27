@@ -85,7 +85,8 @@ function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null
   switch (kindOf(entity)) {
     case "actor": {
       const a = value as ActorState;
-      return { glyph: <ActorGlyph actor={a.id} size={28} />, state: "idle", word: a.acts ? `${a.acts} acts so far` : "Not acted yet", phase: "running", since: a.lastActedAt };
+      // No act in the history held: said as a fact of the records, never as if it had refused or failed to act.
+      return { glyph: <ActorGlyph actor={a.id} size={28} />, state: "idle", word: a.acts ? `${a.acts} acts so far` : "No act recorded here yet", phase: "running", since: a.lastActedAt };
     }
     case "slice": {
       const s = value as SliceState;

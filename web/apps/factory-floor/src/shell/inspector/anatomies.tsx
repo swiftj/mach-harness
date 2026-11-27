@@ -19,7 +19,11 @@ import {
   streamObservationOf,
   visitStatusOf,
   type Scene,
-  MAX_ROUNDS,
+  carriedOnWords,
+  roundAgainstLimit,
+  roundGroups,
+  roundOfWords,
+  stoppedForPerson,
   ref,
   type ActorState,
   type AgentState,
@@ -74,6 +78,9 @@ import { checkCitingPath } from "../../evidence/model";
 import { useSource } from "../source/context";
 import { landedCommitOf, type CommitLink } from "../../line/lanesModel";
 import { lanesKey, useCellLanes } from "../../line/useLanes";
+import { rowOfCell } from "../../line/model";
+import { StoppedPanel } from "../../stopped/StoppedPanel";
+import { useNeeds } from "../../needs/context";
 import { historyEndedAt, useSceneStore } from "../../scene";
 import { isStale, type FactoryStatus } from "../../scene/connection";
 
@@ -301,6 +308,23 @@ export function SliceAnatomy({ slice }: { slice: SliceState }) {
 
 // ---------------------------------------------------------------- cell
 
+/** A cell stopped for a person: the same panel the Line opens from its "Stopped" box (src/stopped). */
+function CellStopped({ cell }: { cell: CellState }) {
+  const needs = useNeeds();
+  const words = useScene((s) => {
+    // The stop's sentence and moment do not depend on the clock: 0 is enough here.
+    const row = rowOfCell(s, cell, 0);
+    return `${row.since ?? ""}\u0000${row.why}`;
+  });
+  const [since, why] = words.split("\u0000") as [string, string];
+  const need = needs.find(cell.ticketId);
+  return (
+    <div className="mb-5 rounded-sm border border-factory-fail bg-factory-fail-soft/40 px-3 py-3" data-cell-stopped={cell.ticketId}>
+      <StoppedPanel ticketId={cell.ticketId} cell={cell} sentence={why} at={since ? Number(since) : null} need={need} live={cell.meta.authority !== "simulated"} />
+    </div>
+  );
+}
+
 export function CellAnatomy({ cell }: { cell: CellState }) {
   const gates = useScene((s) => s.gates);
   const look = stageLook(cell.stage);
@@ -322,11 +346,12 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
   const nowQuotes = useScene((s) => (live ? ["waiting-dependency", "waiting-person"].includes(activityOf(s, ref.cell(cell.ticketId), { stale }).state) : false));
   return (
     <>
+      {stoppedForPerson(cell) ? <CellStopped cell={cell} /> : null}
       <Section title="Facts">
         <Facts
           facts={[
             ["Stage", <StateWord key="s" state={look.state} mark={look.mark} label={look.label} />],
-            ["Round", `${cell.round} of ${MAX_ROUNDS}`],
+            ["Round", stoppedForPerson(cell) ? `${roundOfWords(cell)}, stopped for a person` : roundOfWords(cell)],
             ["Slice", <Mono key="sl">{cell.sliceId}</Mono>],
             now ? ["Now", nowQuotes ? <FreeText key="n" field="waitReason" text={now} /> : now] : null,
             ["Risk", isKnown(cell.meta, "risk") ? cell.risk : <NotRecorded key="r" />],
@@ -347,13 +372,23 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
       <Section title="Rounds">
         {cell.verifications.length === 0 && cell.reviews.length === 0 ? <Empty>No verification or review yet.</Empty> : null}
         <ol className="flex flex-col gap-3">
-          {Array.from({ length: cell.round }, (_, i) => i + 1).map((n) => {
-            const v = cell.verifications.find((x) => x.round === n);
-            const r = cell.reviews.find((x) => x.round === n);
-            if (!v && !r) return null;
+          {roundGroups(cell).map((g) => {
+            if (g.kind === "carried-on") {
+              return (
+                <li key={g.key} className="rounded-sm border border-dashed border-factory-human bg-factory-human-soft px-3 py-2" data-round-carried-on={g.carry.by ?? ""}>
+                  <p className="text-caption font-semibold text-ink">
+                    {g.carry.by === "person-start" ? "A fresh set of rounds" : g.carry.by === "person-decision" ? "One more round" : "Carried on"}, <When t={g.carry.at} inline />
+                  </p>
+                  <p className="mt-0.5 text-caption text-ink-muted">{carriedOnWords(g.carry)}</p>
+                </li>
+              );
+            }
+            const n = g.round;
+            const v = g.verification;
+            const r = g.review;
             const passed = v ? v.checks.filter((c) => c.result === "pass").length : 0;
             return (
-              <li key={n} className="rounded-sm border border-line px-3 py-2">
+              <li key={g.key} className="rounded-sm border border-line px-3 py-2">
                 <p className="mb-1 text-caption font-semibold text-ink">Round {n}</p>
                 <RefList>
                   {v ? (
@@ -822,7 +857,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
           facts={[
             decision.reason ? ["Reason", decision.reason === "none" ? NO_REASON_WORDS : <ReasonWords key="r" reason={decision.reason} />] : null,
             decision.subject ? ["For", <Mono key="s">{decision.subject}</Mono>] : null,
-            gate.round ? ["Round", `${gate.round} of ${MAX_ROUNDS}`] : null,
+            gate.round ? ["Round", cell ? roundAgainstLimit(cell, gate.round) : String(gate.round)] : null,
             reachedEarlier ? ["Reached", at(gate.openedAt)] : null,
             waitingSince !== null ? ["Waiting", <Elapsed key="w" startedAt={waitingSince} finishedAt={null} mode="wait" />] : null,
             // Once merged, where the merge is (its station's visits): reached from here only.
@@ -1163,6 +1198,35 @@ function allAgentsOf(cells: Readonly<Record<string, CellState>>, executionId: st
 
 // ---------------------------------------------------------------- actor
 
+/**
+ * The supervisor and the tickets stopped for a person: it takes no step on them until a person decides,
+ * and says who carries each on once decided (a Factory running here, or the next /mach pull).
+ */
+function SupervisorWaits() {
+  const stopped = useScene((s) => Object.values(s.cells).filter((c) => c.stage === "blocked").map((c) => c.ticketId).sort().join(" "));
+  const running = useSceneStore((s) => s.factoryStatus?.running?.running ?? null);
+  const tickets = stopped ? stopped.split(" ") : [];
+  return (
+    <Section title="What it does now">
+      <p className="text-body-sm text-ink" data-supervisor-running={running === null ? "unknown" : running ? "yes" : "no"}>
+        {running === true ? "A Factory runs here, so the supervisor ticks once a minute." : running === false ? "No Factory runs here, so the supervisor is not running. /mach pull in Claude Code starts it." : "Whether a Factory runs here is not known on this page."}
+      </p>
+      {tickets.length ? (
+        <ul className="mt-2 flex flex-col gap-1 text-body-sm" data-supervisor-waits={tickets.length}>
+          {tickets.map((t) => (
+            <li key={t}>
+              <EntityLink to={ref.cell(t)}>{t}</EntityLink>
+              <span className="text-ink">
+                : stopped, it waits for a person, so the supervisor takes no step on it. A person carries it on with a fix (here or with /mach decide), or starts the Factory with /mach pull, which gives a ticket stopped for its rounds a fresh set of rounds. {running === true ? "The supervisor" : "The Factory"} then takes it up again at the build step.
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </Section>
+  );
+}
+
 /** The line supervisor or the scheduler: who it is, the real code that acts, its acts so far, its last decision. */
 export function ActorAnatomy({ actor }: { actor: ActorState }) {
   const entity = ref.actor(actor.id);
@@ -1189,13 +1253,14 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
             actor.lastKind ? ["Last event", <Mono key="k">{actor.lastKind}</Mono>] : null,
           ]}
         />
-        <p className="mt-3 text-caption text-ink-subtle">Not a Claude agent: a script that runs inside the supervisor's tick and writes events of its own.</p>
+        <p className="mt-3 text-caption text-ink-subtle">Not a Claude agent: part of MACH that runs inside the supervisor's tick and writes events of its own.</p>
       </Section>
+      {actor.id === "supervisor" ? <SupervisorWaits /> : null}
       <Section title="Last decision">
         {decision ? (
           <div className="border-l-2 border-factory-select pl-3">
             <p className="font-mono text-[11px] text-ink-subtle tabular">
-              {decision.event.type}, {timecode(decision.t)}
+              {decision.event.type}, <When t={decision.t} precision="second" />
             </p>
             <p className="mt-0.5 text-body-sm text-ink">
               <EventWords entry={decision} labelled={held.length > 0} />
@@ -1237,6 +1302,7 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
 export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
   const kind = visit.station as StationKind;
   const status = visitStatusOf(visit);
+  const cellOfVisit = useScene((s) => s.cells[visit.ticketId] ?? null);
   const recurs = (visit.station === "review" || visit.station === "verify") && status.state === "ended" && outcomeState(visit.outcome) === "failed" ? visit.station : null;
   return (
     <>
@@ -1254,7 +1320,7 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
             // The station is a link to every visit of this ticket to it (the ticket is the header's link).
             ["Station", <EntityLink key="st" to={ref.station(visit.station, visit.ticketId)} label={`Every visit to ${STATION_WORDS[kind] ?? visit.station} in ${visit.ticketId}`}>{STATION_WORDS[kind] ?? visit.station}</EntityLink>],
             ["Cell", <Mono key="c">{visit.ticketId}</Mono>],
-            ["Round", `${visit.round} of ${MAX_ROUNDS}`],
+            ["Round", roundAgainstLimit(cellOfVisit ?? { round: visit.round, stage: "building" }, visit.round)],
             ["Step", isKnown(visit.meta, "action") ? visit.action : <NotRecorded key="a" />],
             ["Entered", at(visit.enteredAt)],
             ["State", visitStateWords(visit)],
@@ -1304,6 +1370,7 @@ function ReviewerWords({ seat }: { seat: SeatEntity }) {
 }
 
 export function SeatAnatomy({ seat }: { seat: SeatEntity }) {
+  const cellOfSeat = useScene((s) => s.cells[seat.ticketId] ?? null);
   return (
     <>
       <Section title="Facts">
@@ -1311,7 +1378,7 @@ export function SeatAnatomy({ seat }: { seat: SeatEntity }) {
           facts={[
             ["Seat", seat.seat],
             ["Cell", <Mono key="c">{seat.ticketId}</Mono>],
-            ["Round", `${seat.round} of ${MAX_ROUNDS}`],
+            ["Round", roundAgainstLimit(cellOfSeat ?? { round: seat.round, stage: "building" }, seat.round)],
             ["Review", <EntityLink key="g" to={ref.gate(`${seat.ticketId}/review#${seat.round}`)}>Review, round {seat.round}</EntityLink>],
             ["Model", seatModelName(seat.model) ?? <NotRecorded key="m" />],
             ["Vote", seat.vote ? outcomeStateWords(seat.vote) : "not yet"],

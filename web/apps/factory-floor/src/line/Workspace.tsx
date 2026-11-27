@@ -27,8 +27,21 @@ import "./line.css";
 import { TriangleAlert } from "lucide-react";
 import { useNeeds, type Outcome, type Waiting } from "../needs/context";
 import { DecidePanel, OutcomeLine } from "../needs/Decide";
-import { NOT_RUNNING, WAITING_WORDS, type NeedTicket } from "../needs/model";
+import { NOT_RUNNING, NOT_RUNNING_STOPPED, WAITING_WORDS, type NeedTicket } from "../needs/model";
 import { Back } from "./Panels";
+import { StoppedPanel } from "../stopped/StoppedPanel";
+
+/** After a stopped ticket is opened: focus "What stopped it" once its panel is drawn. */
+export function focusStopped(ticket: string): void {
+  if (typeof window === "undefined") return;
+  window.requestAnimationFrame(() =>
+    window.requestAnimationFrame(() => {
+      const panel = document.querySelector<HTMLElement>(`[data-stopped-panel="${CSS.escape(ticket)}"] [data-stopped-heading]`);
+      panel?.focus();
+      panel?.scrollIntoView({ block: "start" });
+    }),
+  );
+}
 
 /**
  * The panel a selection shows: a ticket's row, a station's column, or nothing (the feed). A ticket the
@@ -122,7 +135,7 @@ function NeedsYou({
       )}
       {notRunning && items.length > 0 ? (
         <p className="basis-full text-body-sm text-ink-muted" data-needs-not-running="">
-          {NOT_RUNNING}
+          {items.some((i) => i.row?.state === "stopped" || i.need?.state === "escalated") ? NOT_RUNNING_STOPPED : NOT_RUNNING}
         </p>
       ) : null}
     </section>
@@ -204,6 +217,8 @@ export function LineWorkspace() {
       } else {
         setPicked({ ticket: item.ticketId, selection });
       }
+      // "Unblock 6" opens what stopped it.
+      if (item.row?.state === "stopped" || item.need?.state === "escalated") focusStopped(item.ticketId);
     },
     [pickRow, selection],
   );
@@ -221,6 +236,19 @@ export function LineWorkspace() {
     </section>
   ) : undefined;
   const shownRow = pickedTicket && pickedTicket !== row?.ticketId ? null : row;
+  // A ticket stopped for a person: the one panel that says what stopped it, with its decision (src/stopped).
+  const stoppedPart =
+    panelTicket && (row?.state === "stopped" || need?.state === "escalated") ? (
+      <StoppedPanel
+        key={`stopped-${panelTicket}`}
+        ticketId={panelTicket}
+        cell={scene.cells[panelTicket] ?? null}
+        sentence={row?.why ?? need?.summary ?? "The line stopped work on it."}
+        at={row?.since ?? null}
+        need={need}
+        live={live}
+      />
+    ) : undefined;
   const pickStation = useCallback((c: number) => store.select(`station:${LINE_STATIONS[c]!.key}` as EntityRef, { focus: false }), [store]);
   const back = useCallback(() => store.select(null), [store]);
   const recordRow = record ? (model.rows.find((r) => r.ticketId === record) ?? null) : null;
@@ -248,6 +276,11 @@ export function LineWorkspace() {
             onTicket={pickRow}
             onStation={pickStation}
             onRecord={(r) => setRecord(r.ticketId)}
+            onStopped={(r) => {
+              setPicked(null);
+              pickRow(r);
+              focusStopped(r.ticketId);
+            }}
             empty={empty}
           />
         </div>
@@ -263,7 +296,17 @@ export function LineWorkspace() {
               onRecord={() => setRecord(row.ticketId)}
               onFloor={() => showOnFloor(store, { ref: `cell:${row.ticketId}` as EntityRef })}
               decide={decidePart}
+              stopped={stoppedPart}
             />
+          ) : stoppedPart ? (
+            <div data-line-panel="ticket" data-ticket={panelTicket ?? ""}>
+              <Back onBack={() => (setPicked(null), back())} />
+              <p className="mt-4 font-mono text-[13px] text-ink-muted">{panelTicket}</p>
+              <h3 tabIndex={-1} data-inspector-heading="" className="mb-4 font-sans text-title-3 font-bold leading-snug text-ink outline-none">
+                {panelTicket} is stopped
+              </h3>
+              {stoppedPart}
+            </div>
           ) : need || (outcome && panelTicket) ? (
             <div data-line-panel="ticket" data-ticket={panelTicket ?? ""}>
               <Back onBack={() => (setPicked(null), back())} />

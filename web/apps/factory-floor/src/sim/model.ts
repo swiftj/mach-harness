@@ -396,6 +396,19 @@ export interface VerificationCheck {
   readonly mock?: SimMockRecord;
 }
 
+/**
+ * A person carried a ticket on past its stop (a station's `carried_on` record): the round shown from
+ * then on and the new limit, as recorded. `person-start`: a fresh allowance, when a person started the
+ * Factory or pulled the ticket by hand; `person-decision`: one more round, by a person's decision.
+ */
+export interface CarriedOnState {
+  readonly at: number;
+  readonly round: number | null;
+  readonly max: number | null;
+  readonly by: "person-start" | "person-decision" | null;
+  readonly eventId: string;
+}
+
 export interface VerificationState {
   readonly round: number;
   readonly status: "running" | VerificationStatus;
@@ -585,9 +598,13 @@ export interface CellState {
   readonly action: StepAction | null;
   readonly stationSince: number | null;
   readonly visits: readonly StationVisit[];
-  /** Judging round, 1 to 3 (build loop + 1). */
+  /** Judging round as recorded (build loop + 1), or as a person's carry-on set it; read it through sim/rounds.ts. */
   readonly round: number;
   readonly loop: number;
+  /** The round limit a person's carry-on record set; absent or null: the configured limit (MAX_ROUNDS). */
+  readonly roundMax?: number | null;
+  /** Each time a person carried the ticket on past its stop, oldest first. */
+  readonly carriedOn?: readonly CarriedOnState[];
   readonly executionId: string | null;
   readonly workflowPhase: BeltPhase | null;
   readonly suite: "unknown" | "green" | "red";
