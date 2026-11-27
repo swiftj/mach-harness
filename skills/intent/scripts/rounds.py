@@ -283,7 +283,7 @@ def _say(cellroot: Path, entry: Dict[str, Any], data_after: Dict[str, Any], via:
 
 
 def carry_on(cellroot: Path, config: Any, *, by: str, via: str = "terminal", guidance: Optional[str] = None,
-             why: str = "person-decision", fresh: bool = False) -> Dict[str, Any]:
+             why: str = "person-decision", fresh: bool = False, start: Optional[str] = None) -> Dict[str, Any]:
     """A person's carry-on of a stopped ticket; with `fresh` (a person's start), its rounds also count from zero again.
     Returns what was recorded; raises RoundsError, with nothing changed, when it cannot be carried on."""
     name = person_word(by, via, guidance)
@@ -305,6 +305,8 @@ def carry_on(cellroot: Path, config: Any, *, by: str, via: str = "terminal", gui
     with held(cellroot) as data:
         entry = _grant(cellroot, config, data, name=name, via=via, words=(guidance or "").strip(), why=why, loop=loop, stage=stage,
                        station=failure["station"], failed_round=failure["round"], findings=failure["findings"], fresh=fresh)
+        if start:
+            entry["start"] = start
         # The stage, read afresh: it is set to 'built' only while it is still the one the ticket stopped at, so a station that
         # moved the ticket meanwhile is never undone. Nothing runs a stopped ticket, so this is the only writer of it now.
         fresh_cell = load(cellroot / "cell.json")
@@ -330,8 +332,21 @@ def grant(cellroot: Path, config: Any, *, by: str, via: str = "terminal", guidan
         entry = _grant(cellroot, config, data, name=name, via=via, words=(guidance or "").strip(), why="person-decision", loop=loop or 0,
                        stage=cell.get("stage") if isinstance(cell, dict) else None, station=station, failed_round=failed_round,
                        findings=inside(cellroot, findings), fresh=False)
+        entry["sent_back"] = True
         after = dict(data)
     return _say(cellroot, entry, after, via)
+
+
+def who(entry: Dict[str, Any]) -> str:
+    """What happened, in one clause, for the builder's prompt: a person's carry-on, a person's send-back, or MACH's fresh set on a
+    person's start (the Factory's, or work on this ticket)."""
+    name = entry.get("by") or "a person"
+    if entry.get("why") == "person-start":
+        return (f"MACH gave this ticket a fresh set of rounds when {name} started the Factory" if entry.get("start") == "factory"
+                else f"MACH gave this ticket a fresh set of rounds when {name} started work on it again")
+    if entry.get("sent_back"):
+        return f"{name} sent it back with this reason, in its last round, and the builder has one more"
+    return f"{name} carried this ticket on after it stopped"
 
 
 def stopped_for_rounds(cell: Dict[str, Any]) -> bool:
@@ -339,7 +354,7 @@ def stopped_for_rounds(cell: Dict[str, Any]) -> bool:
     return cell.get("stage") == "blocked"
 
 
-def start_afresh(cellroot: Path, config: Any, *, by: str, via: str = "terminal") -> Optional[Dict[str, Any]]:
+def start_afresh(cellroot: Path, config: Any, *, by: str, via: str = "terminal", start: str = "ticket") -> Optional[Dict[str, Any]]:
     """A person started the line: this ticket's rounds count from zero again. A ticket stopped for its rounds is carried on from the
     build station's revision with its last findings; any other ticket's stage and files are never touched (only rounds.json is).
     None when there is nothing to reset (no build yet, or the count is already fresh). Never inside a supervised execution."""
@@ -352,7 +367,7 @@ def start_afresh(cellroot: Path, config: Any, *, by: str, via: str = "terminal")
         return None
     if stopped_for_rounds(cell):
         try:
-            return carry_on(cellroot, config, by=by, via=via, why="person-start", fresh=True)
+            return carry_on(cellroot, config, by=by, via=via, why="person-start", fresh=True, start=start)
         except RoundsError:
             return None
     stage = cell.get("stage")

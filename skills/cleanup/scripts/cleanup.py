@@ -1504,6 +1504,9 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
                 in_git.append(kept_entry(project, cell.ticket_id, ref, sha, kept_ref_holds(ref), excludes, files="/lane-files/" in ref))
         for item in kept_refs_made:
             in_git.append(kept_entry(project, cell.ticket_id, item["ref"], item["commit"], item["holds"], excludes, files=item["files"]))
+    if plan.get("deletes_for_good"):  # an abandoned ticket: what was deleted, for a reader that tells a removed cell from an unreadable one
+        record["deleted"] = {"cell": True, "branch": bool(branch_deleted), "refs": len(replans_deleted), "archives": list(plan["would"].get("delete_archives") or []),
+                             "unmerged_commits": plan["deletes"]["unmerged_commits"], "uncommitted_files": plan["deletes"]["uncommitted_files"]}
     record["raised_to_person"] = list(plan["raised_to_person"])
     record["archive_kept"] = {key: decision.get(key) for key in ("kept", "setting", "chosen_by", "published", "reason")}
     branch_in_git = next((item for item in in_git if item["kind"] == "branch"), None)

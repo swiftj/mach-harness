@@ -55,6 +55,7 @@ HEADLINES = {
     "nothing_failed": "Nothing failed",
     "not_started": "No cell yet: the ticket has not been groomed",
     "finished": "The ticket is finished",
+    "abandoned": "The ticket was abandoned, and its work deleted from this machine",
     "archived": "The ticket is finished and archived",
     "unknown_ticket": "Unknown ticket",
 }
@@ -438,6 +439,9 @@ def no_cell(root: Path, ticket_id: str, next_info: Dict[str, Any]) -> Tuple[Dict
             evidence = "The ticket was abandoned: its work was deleted from this machine, as asked."
         elif evidence and isinstance(kept.get("reason"), str):
             evidence += " " + clean(kept["reason"], 300)
+        if record.get("outcome") == "abandoned":
+            return {"headline_code": "abandoned", "archive": None, "abandoned_at": clean(record.get("closed_at"), 40), "run_record": facts,
+                    **({"evidence": evidence} if evidence else {})}, 0
         return {"headline_code": "finished", "archive": None, "run_record": facts, **({"evidence": evidence} if evidence else {})}, 0
     known = (factory / "tickets" / f"{ticket_id}.md").is_file() or (factory / "inbox" / f"{ticket_id}.json").is_file()
     if known:
@@ -831,7 +835,7 @@ def human(report: Dict[str, Any]) -> str:
             lines.append(f"- [lanes] {item['text']}")
     if report.get("evidence"):  # a finished ticket whose archive was not kept: said plainly, not as something missing
         lines.append(report["evidence"])
-    if report.get("headline_code") not in ("unknown_ticket", "archived", "finished"):
+    if report.get("headline_code") not in ("unknown_ticket", "archived", "finished", "abandoned"):
         lines.append(f"Rounds: {report['rounds_used']} of {report['max_rounds']} used, {report['rounds_left']} left.")
     nxt = report.get("next") or {}
     if nxt.get("action"):

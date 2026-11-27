@@ -188,7 +188,8 @@ class FreshRoundsTest(FileCells):
         findings = self.stopped("review")
         done = self.fresh()
         self.assertEqual((done["reset"], done["carried_on"]), ([TICKET], [TICKET]))
-        self.assertEqual(done["said"], [f"Ticket {TICKET} had used all its rounds; MACH gave it a fresh set and the builder is carrying on from the last findings."])
+        self.assertEqual(done["said"], [f"Ticket {TICKET} had used all its rounds; MACH gave it a fresh set. Its next step is the builder's revision from "
+                                        f"the last findings, which the Factory or {run.skill('run')} {TICKET} carries on."], "carrying on is said only where work started")
         step = self.next()
         self.assertEqual((step["action"], step["findings"]), ("revise", str(findings)))
         report = self.report()
@@ -250,7 +251,7 @@ class FreshRoundsTest(FileCells):
         self.assertEqual(shown["action"], "revise")
         self.assertIn("MACH gave it a fresh set", " ".join(shown["warnings"]))
         calls = []
-        with mock.patch.object(run, "fresh_rounds", side_effect=lambda project, tickets, via="terminal": calls.append(list(tickets)) or {"reset": [], "carried_on": [], "said": []}), \
+        with mock.patch.object(run, "fresh_rounds", side_effect=lambda project, tickets, via="terminal", start="ticket": calls.append(list(tickets)) or {"reset": [], "carried_on": [], "said": []}), \
                 mock.patch.object(run, "factory", return_value=(mock.Mock(IntakeError=RuntimeError), mock.Mock())), \
                 mock.patch.object(run, "factory_context", return_value=mock.Mock()):
             import pull
@@ -315,6 +316,57 @@ class ReviewFindingsTest(FileCells):
         self.fresh = run.fresh_rounds(run.Project(self.project), [TICKET])
         step = self.next()
         self.assertIn("MACH gave this ticket a fresh set of rounds when", step["reason"])
+
+    def test_each_start_says_what_is_true(self):
+        """Second check, finding 2: naming a ticket is not starting the Factory; finding 3: carrying on only where work started."""
+        self.stopped("verify")
+        with mock.patch.object(run, "claim_step", side_effect=lambda project, found, *a, **k: found):
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                run.main(["--project", str(self.project), "next", TICKET, "--by-person"])
+        shown = json.loads(out.getvalue())
+        self.assertIn("started work on it again", shown["reason"])
+        self.assertNotIn("started the Factory", shown["reason"] + shown["prompt"])
+        self.assertIn("carries it on here from the last findings", " ".join(shown["warnings"]))
+        self.tmp.cleanup()
+        Path(self.tmp.name).mkdir()
+        (self.project / ".factory").mkdir()
+        self.stopped("verify")
+        run.fresh_rounds(run.Project(self.project), [TICKET], start="factory")
+        self.assertIn("when", self.next()["reason"])
+        self.assertIn("started the Factory", self.next()["reason"])
+        self.assertEqual(run.fresh_words({"carried_on": [TICKET], "reset": [TICKET]}, {TICKET: "factory"}),
+                         [f"Ticket {TICKET} had used all its rounds; MACH gave it a fresh set and the Factory is carrying it on from the last findings."])
+
+    def test_an_abandoned_ticket_is_said_to_be_abandoned_with_when(self):
+        """Second check, finding 6: the run record says what was deleted, and explain and the digest say it was abandoned."""
+        import cleanup
+        self.write("cell.json", {"ticket_id": TICKET, "stage": "building", "isolation": "none", "branch": None})
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            self.assertEqual(cleanup.main(["--project", str(self.project), "run", TICKET, "--abandon", "Product cancelled the feature."]), 0)
+        record = json.loads((self.project / ".factory/archive/runs.jsonl").read_text().splitlines()[-1])
+        self.assertEqual((record["outcome"], record["deleted"]["cell"], record["archive"]), ("abandoned", True, None))
+        self.assertTrue(record["closed_at"])
+        step = self.next()
+        self.assertIn(f"This ticket was abandoned at {record['closed_at']}", step["reason"])
+        report = explain.explain(self.project, TICKET, step, {})[0]
+        self.assertEqual((report["headline_code"], report["abandoned_at"]), ("abandoned", record["closed_at"]))
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            run.main(["--project", str(self.project), "explain", TICKET, "--json"])
+        self.assertIn("no cell: it was abandoned and its work deleted", json.loads(out.getvalue())["digest"]["where"])
+
+    def test_a_last_round_send_back_tells_the_builder_it_was_sent_back(self):
+        """Second check, finding 5."""
+        self.write("cell.json", {"ticket_id": TICKET, "stage": "built", "isolation": "none"})
+        self.write("build.json", {"loop": 2, "tasks": [{"id": "T01", "status": "done"}]})
+        self.write("review/round-3/person-findings.md", "# Sent back\n")
+        rounds.grant(self.cellroot, {}, by="Dana Smith", guidance="Name the field.", station="person",
+                     findings=self.cellroot / "review/round-3/person-findings.md", failed_round=3)
+        step = self.next()
+        self.assertIn("Dana Smith sent it back with this reason", step["prompt"])
+        self.assertNotIn("after it stopped", step["prompt"])
 
     def test_abandon_deletes_the_earlier_archive_too_and_explain_says_why(self):
         """Finding 11."""

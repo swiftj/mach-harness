@@ -324,15 +324,19 @@ def enable(ctx: Context, args: Any) -> Dict[str, Any]:
             agent = {"error": str(exc)}
     started = start_background(ctx)  # factory start (= enable): a supervisor that outlives the session
     after = policy_module.read(ctx.root)
-    held = why_not(after, policy_module.effective(after, ctx.config))  # the project's own setting, said with where to change it
-    return {"ready": True, "enabled": True, "updated": previous is not None, "factory": pol["autonomy"], "policy": describe(pol), "summary": summary, "checks": results,
+    in_force = policy_module.effective(after, ctx.config)
+    held = why_not(after, in_force)  # the project's own setting, said with where to change it
+    if held:  # every field says what is in force: observing, held by the project's setting, and the one thing that changes it
+        summary = summarize({**request, "autonomy": in_force.get("autonomy") or "observe"})
+    return {"ready": True, "enabled": True, "updated": previous is not None, "factory": in_force.get("autonomy") if held else pol["autonomy"],
+            "policy": describe(in_force if held else pol), "summary": summary, "checks": results,
             "git_hooks": hooks, "persistent_service": agent,
             "supervisor": started["supervisor"], "pid": started.get("pid"), "why_not": started.get("why_not"),
             **({"already_running": started["already_running"]} if started.get("already_running") else {}),
             "in_words": " ".join(part for part in (lifted, held or started.get("in_words") or started.get("why_not")) if part),
             **({"held_by": held} if held else {}),
             **({"observe_lifted": lifted} if lifted else {}),
-            "next": ("The Factory is on for this machine only, and runs in the background until stopped. /mach pull hands it ready work; "
+            "next": (held if held else "The Factory is on for this machine only, and runs in the background until stopped. /mach pull hands it ready work; "
                      "/mach factory stop stops it."),
             "factory_started": started["supervisor"] in ("started", "converted", "already-running", "service")}
 

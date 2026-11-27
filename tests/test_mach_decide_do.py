@@ -589,7 +589,7 @@ class CommandTest(Base):
         self.assertTrue(result["done"])
         self.assertEqual(self.station.calls, [("review", ["approve-human", TICKET, "--by=Dana Smith", "--via=floor"])])
         self.assertEqual(len(result["warnings"]), 1)
-        self.assertRegex(result["warnings"][0], r"^Another worker was handed this ticket's review step at \d\d:\d\d UTC and may still be at work\.$")
+        self.assertRegex(result["warnings"][0], r"^Another worker was handed this ticket's review step at \d{4}-\d\d-\d\d \d\d:\d\d UTC and may still be at work\.$")
         self.assertNotIn("took_over", result, "the station accepts it: the other worker's claim is only said")
 
     def take_over_cli(self, *extra, carry=None):
@@ -724,7 +724,7 @@ class TakeOverTest(Base):
         self.assertEqual(result["now"], "Dana Smith took over LOCAL-001's verify step. Another worker had been handed the verify step at 11:50 UTC: "
                                         "it stops at its next step, and nothing it had not committed is used. "
                                         "The Factory carries it on in the background: it goes on from where the other worker left it.")
-        self.assertEqual(result["warnings"], ["Another worker was handed this ticket's verify step at 11:50 UTC and may still be at work."])
+        self.assertEqual(result["warnings"], ["Another worker was handed this ticket's verify step at 2026-11-24 11:50 UTC and may still be at work."])
         self.assertEqual((self.carried, self.station.calls), ([True], []))
 
     def test_take_it_over_from_the_terminal_leaves_it_for_the_person(self):

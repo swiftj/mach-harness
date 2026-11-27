@@ -304,7 +304,7 @@ class WorkerInCellTest(Base):
     def claim(self, stage, at):
         self.write(TICKET, "claim.json", {"step": "verify", "stage": stage, "holder": "ab" * 16, "at": stamp(at), "renewed_at": stamp(at)})
 
-    WARNING = "Another worker was handed this ticket's verify step at 11:50 UTC and may still be at work."
+    WARNING = "Another worker was handed this ticket's verify step at 2026-11-16 11:50 UTC and may still be at work."
 
     def test_a_ticket_that_waits_for_nothing_else_offers_to_let_it_carry_on_or_take_it_over(self):
         self.cell(stage="built")
@@ -373,7 +373,16 @@ class WorkerInCellTest(Base):
         self.claim("built", after_midnight - timedelta(minutes=10))
         self.assertEqual(self.one(now=after_midnight)["warnings"],
                          ["Another worker was handed this ticket's verify step at 2026-11-16 23:55 UTC and may still be at work."])
-        self.assertEqual(decide.clock("2026-11-16T02:47:00+00:00", NOW), "02:47 UTC")
+        self.assertEqual(decide.clock("2026-11-16T02:47:00+00:00", NOW), "2026-11-16 02:47 UTC")
+
+    def test_the_persons_own_claim_is_not_another_worker(self):
+        """Second check, finding 4: the claim the person's own /mach <ticket> made is theirs."""
+        self.cell(stage="built")
+        self.claim("built", NOW - timedelta(minutes=10))
+        project = run.Project(self.project)
+        result = decide.main([TICKET], self.project, config=project.config, next_step=lambda ticket: run.next_step(project, ticket, False),
+                             now=NOW, mine="ab" * 16)
+        self.assertEqual([item["warnings"] for item in result["tickets"]], [])
 
     def test_a_stale_claim_or_one_from_another_stage_counts_for_nothing(self):
         self.cell(stage="built")
