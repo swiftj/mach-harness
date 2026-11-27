@@ -689,6 +689,7 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
                                  "already built is redone, and verification and review then run again as normal."})
             options.append(item)
             facts["stopped"] = stopped_facts(root, cellroot, report)
+            facts["stopped"]["station"] = facts["stopped"]["station"] or "review"  # the security veto stands again
         options.append(abandon(ticket))
     elif state == "bronze":
         options.append(option("audit", "Audit the repository again",

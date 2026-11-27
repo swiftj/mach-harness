@@ -3177,7 +3177,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = product.add_parser("intake", help="take ready slices in: a slice issue is its own ticket; a ready folder gets a local ticket")
     p.add_argument("--dry-run", action="store_true", help="show what would be taken in; change nothing")
     p.add_argument("--fetch", action="store_true", help="fetch from the shared repository first (never changes the checkout)")
-    p.add_argument("--reissue", action="append", metavar="SLICE-ID", help="put a slice whose work was abandoned back in the queue, on the same ticket")
+    p.add_argument("--reissue", action="append", metavar="SLICE-ID", help="put a slice whose work was abandoned back in the queue, on the same ticket; its earlier work was deleted, so it is planned and built again from its spec")
     p.set_defaults(func=cmd_product)
     p = product.add_parser("import", help="take in a ready folder handed over outside Git; only on an engineer's explicit command")
     p.add_argument("folder", help="a product/ready/SLICE-NNN folder: slice.json, spec.md and why.md")
