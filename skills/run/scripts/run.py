@@ -640,8 +640,7 @@ def stopped_reason(root: Path, cell: Dict[str, Any], config: Dict[str, Any]) -> 
         what = "verification failed it"
     counted = min(rounds_rule().used(cell, loop), limit)
     return (f"The ticket stopped after {what} in round {counted} of {limit}, its last. A person can carry it on with a fix: the builder "
-            f"gets one more round on the same branch, with the findings and what the person says to do ({skill('run')} decide {root.name}, "
-            "or the Factory Floor).")
+            f"gets one more round on the same branch, with the findings and what the person says to do ({skill('run')} decide {root.name}).")
 
 
 def test_command_note(root: Path, ticket_id: str, started: bool) -> Optional[Tuple[str, str]]:
@@ -885,7 +884,7 @@ NEEDS_TEXT = {
     "policy-owner": "A policy's owner accepts the flagged concern, or the spec changes so the policy is met.",
     "human-approval": "Approve the change, or not, after reading the review findings.",
     "merge": "Merge the approved branch; the project's settings keep merging for a person.",
-    "person-to-take-over": "It failed its last round. Carry it on with a fix: the builder gets one more round, with the findings and your words (/mach decide, or the Factory Floor).",
+    "person-to-take-over": "It failed its last round. Carry it on with a fix: the builder gets one more round, with the findings and your words (/mach decide).",
     "repository-hardening": "Harden the repository first: its readiness tier is Bronze.",
     "person": "Dispatch this ticket on its own.",
     "worker-in-cell": "Another worker is on this ticket's step, so the Factory left it alone. Name the ticket (/mach <ticket>) and MACH takes it over at once.",

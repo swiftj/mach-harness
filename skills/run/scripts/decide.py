@@ -358,6 +358,9 @@ def abandon_does(stake: Optional[Dict[str, Any]], extra: str = "") -> str:
             f"for it{counted}), keeps no archive, and closes the ticket as abandoned{extra}.")
 
 
+# CARRY_ON_FIRST, the one rule: wherever carry-on is offered it is the first option and the recommended one, before a security
+# exception (new or renewed) and before anything else. A fix keeps the work moving whatever is decided about the finding; an
+# exception is a person's acceptance of a real finding, never recommended, so it comes second.
 def carry_on_option(ticket: str) -> Dict[str, Any]:
     item = option("carry-on", "Carry on with a fix",
                   "The builder gets one more round on the same branch, with the last findings and what the person says to do; nothing already "
@@ -684,10 +687,10 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
         build = load_json(cellroot / "build.json", {}) or {}
         if isinstance(build, dict) and build.get("tasks"):
             item = carry_on_option(ticket)
-            item.update({"label": "Let the builder fix it", "recommended": not options,
+            item.update({"label": "Let the builder fix it",
                          "does": "The builder gets a round on the same branch to fix the security finding, with what the person says to do; nothing "
                                  "already built is redone, and verification and review then run again as normal."})
-            options.append(item)
+            options.insert(0, item)  # CARRY_ON_FIRST
             facts["stopped"] = stopped_facts(root, cellroot, report)
             facts["stopped"]["station"] = facts["stopped"]["station"] or "review"  # the security veto stands again
         options.append(abandon(ticket))

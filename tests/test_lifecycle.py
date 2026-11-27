@@ -192,7 +192,7 @@ class WholeBeltTest(Base):
         code, out, err = self.run_main(merge, "run", TICKET, "--by-person")
         self.assertEqual(code, 0, err + out)
         live = (self.cellroot / lifecycle.FILE).read_bytes()
-        code, out, err = self.run_main(cleanup, "run", TICKET)
+        code, out, err = self.run_main(cleanup, "run", TICKET, "--keep-archive")  # the history is replayed from the archive a person asked for
         self.assertEqual(code, 0, err + out)
         self.assertFalse(self.cellroot.exists())
 
@@ -284,7 +284,7 @@ class HistoryTest(Base):
         self.ready()
         self.ok("start", TICKET)
         self.build_through("T02")
-        code, out, err = self.run_main(cleanup, "run", TICKET, "--abandon", "Product cancelled the feature this week.")
+        code, out, err = self.run_main(cleanup, "run", TICKET, "--abandon", "Product cancelled the feature this week.", "--keep-archive")
         self.assertEqual(code, 0, err + out)
         with tarfile.open(str(self.project / ".factory/archive/LOCAL-001.tar.gz")) as tar:
             records = self.assert_valid_and_safe(tar.extractfile(f"{TICKET}/{lifecycle.FILE}").read())
