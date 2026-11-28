@@ -3,13 +3,17 @@
 
 After a ticket's branch is merged, or the ticket is abandoned, this script removes the cell's worktree,
 folder and local branch, and appends one line to the run log that the observe station learns from.
-Whether it first packs the cell into an archive (.factory/archive/<ticket>.tar.gz) is the setting
-cleanup.archive: "none", "raised" (only for a ticket raised to a person, decided by rule from what the
-cell and the line record: raised_to_person; the default, ARCHIVE_DEFAULT) or "all". With no archive,
-nothing a person might want back is lost: an abandoned ticket's branch is kept, MACH's own refs for the
-ticket are kept, and what only the cell's and the lanes' checkouts hold is kept under refs/mach/ first;
-the result names each with the commands that show it and bring it back. It never merges, never pushes,
-never deletes a remote branch, and never touches code on the main checkout.
+Whether it first packs a merged ticket's cell into an archive (.factory/archive/<ticket>.tar.gz) is the setting
+cleanup.archive: "none" (the default, ARCHIVE_DEFAULT), "raised" (only for a ticket raised to a person, decided by rule
+from what the cell and the line record: raised_to_person) or "all". With no archive for a merged ticket, MACH's own refs
+for it are kept, and what only the lanes' checkouts hold is kept under refs/mach/ first; the result names each with the
+commands that show it and bring it back.
+
+An abandoned ticket's work is deleted from this machine for good: its cell, its worktrees, its local feature branch and
+every ref MACH kept for it under refs/mach/, with nothing archived and nothing kept in Git, whatever cleanup.archive says.
+Only a person's --keep-archive keeps it (then it is archived, as before). The plan says first how many unmerged commits and
+uncommitted files go. It never merges, never pushes, never deletes a remote branch, never touches GitHub, and never touches
+code on the main checkout.
 
     cleanup.py plan <ticket> [--merged-as <commit> | --abandon "<why>"] [--keep-archive | --no-archive]
     cleanup.py run <ticket> [--merged-as <commit> | --abandon "<why>"] [--keep-archive | --no-archive]
@@ -20,9 +24,8 @@ never deletes a remote branch, and never touches code on the main checkout.
 The only paths it deletes are .factory/worktrees/<ticket>/ and its own partial files under
 .factory/tmp/ (and, with forget --confirm, a finished ticket's archives). When it keeps an archive it
 archives first, checks the archive, and only then deletes. The only refs it deletes
-are the cell's own feature branch (an abandoned one only when an archive holds its commits, or none
-needs keeping) and, only when an archive is kept, the refs MACH kept for the ticket under refs/mach/
-(kept_prefixes); the commits those refs hold are kept in the archive
+are the cell's own feature branch and, when an archive is kept or the ticket is abandoned, the refs MACH kept for the
+ticket under refs/mach/ (kept_prefixes); with an archive, the commits those refs hold are kept in it
 (replans.bundle) unless the default branch or the archived branch bundle already holds them. For a ticket built in lanes
 (M22) it also removes the lane and join worktrees under lanes/, Git's records of them, and the branches under
 mach-lane/<ticket>/; the lanes' state files are archived, never a lane's checked-out tree, the commits only the lane
@@ -336,9 +339,14 @@ def lane_survey(cell: "Cell", refs: List[str]) -> Optional[Dict[str, Any]]:
 
 
 def lanes_result(cell: "Cell", lanes: Dict[str, Any], done: Dict[str, Any], archive: Optional[str], default: Optional[str],
-                 in_git: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                 in_git: Optional[List[Dict[str, Any]]] = None, deleted: bool = False) -> Dict[str, Any]:
     """What cleanup did with the ticket's lanes, where their work is kept, and how to get it back."""
     ticket, restore = cell.ticket_id, []
+    if deleted:  # an abandoned ticket: its lanes' work was deleted with the rest
+        return {"worktrees_removed": [relative(cell.project, Path(repo)) for repo in sorted(lanes["worktrees"].values())],
+                "worktree_records_dropped": lanes["stale_records"], "branches": lanes["branches"], "branches_deleted": done["branches_deleted"],
+                "bundle": None, "uncommitted_saved": {}, "left": done["left"], "restore": None,
+                "note": "The ticket was abandoned, so its lanes' work was deleted from this machine with the rest; nothing is kept."}
     if archive is None:  # no archive kept: the lanes' work is kept in Git, each ref with the commands that show it and bring it back
         restore = [f"{item['holds'][0].upper()}{item['holds'][1:]} is kept as {item['name']}. To see it: {item['show']}. To bring it back: {item['bring_back']}"
                    + (f" (or one file: {item['files_back']})" if item.get("files_back") else "") + "." for item in in_git or []]
@@ -520,7 +528,7 @@ def unkept_commits(project: Path, refs: List[str], excludes: List[str]) -> int:
 # under MACH's own refs, and `forget` clears it once nobody needs it.
 
 ARCHIVE_VALUES = ("none", "raised", "all")
-ARCHIVE_DEFAULT = "raised"
+ARCHIVE_DEFAULT = "none"
 NOTES = "notes.json"  # under .factory/archive/: what cleanup has already told this project once
 CELL_FILES_PREFIX = "refs/mach/cell-files/"
 
@@ -1020,6 +1028,10 @@ def survey(cell: Cell, abandon: Optional[str], merged_as: Optional[str] = None, 
         if lanes is not None:
             would["bundle_lanes"] = False
     abandoning = abandon is not None
+    if abandoning and flag != "keep":
+        # Abandoned: the work is deleted from this machine for good, with nothing archived or kept in Git (the owner, 2026-11-27).
+        # Only a person's --keep-archive keeps it.
+        return deleting(cell, plan, decision)
     keep_branch = not keep and abandoning and plan["unmerged_commits"] > 0 and bool(would["delete_branch"])
     in_git: List[str] = []
     if not keep:
@@ -1039,6 +1051,52 @@ def survey(cell: Cell, abandon: Optional[str], merged_as: Optional[str] = None, 
                  "keep_in_git": in_git, "archive_then": None if not make else
                  ("kept in .factory/archive/" if keep else "given to records.publish_command, then removed from this machine; kept if the command fails")})
     return plan
+
+
+def deleting(cell: Cell, plan: Dict[str, Any], decision: Dict[str, Any]) -> Dict[str, Any]:
+    """The plan for an abandoned ticket whose work is deleted: no archive, no publish, the branch deleted however far it is from the
+    default branch, every ref MACH kept for the ticket deleted, nothing kept in Git. Says first, plainly, what goes."""
+    would = plan["would"]
+    would.update({"archive": None, "archive_members": [], "bundle_branch": False, "bundle_replans": False,
+                  "delete_branch": f"git branch -D {plan['branch']}" if would.get("delete_branch") else None,
+                  "delete_replan_refs": list(plan["replan_refs"])})
+    lanes = plan.get("lanes")
+    if lanes is not None:
+        would["bundle_lanes"] = False
+    commits, files = plan["unmerged_commits"], len(plan["uncommitted"]) + sum(len(names) for names in ((lanes or {}).get("uncommitted") or {}).values())
+    lane_commits = (lanes or {}).get("unkept_commits") or 0
+    gone = [f"{commits} unmerged commit{'s' if commits != 1 else ''}", f"{files} uncommitted file{'s' if files != 1 else ''}"]
+    if lane_commits:
+        gone.append(f"{lane_commits} commit{'s' if lane_commits != 1 else ''} only its lanes hold")
+    refs = len(plan["replan_refs"])
+    earlier = earlier_archives(cell.project, cell.ticket_id)
+    would["delete_archives"] = earlier
+    plan.update({
+        "raised_to_person": raised_to_person(cell, "abandoned"),
+        "archive_decision": dict(decision, kept=False, chosen_by="abandon", reason=(
+            "The ticket was abandoned: its work was deleted from this machine, with nothing archived or kept in Git. "
+            "Only a person's --keep-archive keeps an abandoned ticket's work.")),
+        "keep_branch": False, "keep_in_git": [], "archive_then": None, "deletes_for_good": True,
+        "deletes": {"unmerged_commits": commits, "uncommitted_files": files, "lane_commits": lane_commits, "refs": refs, "branch": plan["branch"]},
+        "in_words": (f"Abandoning {cell.ticket_id} deletes its work from this machine for good: {', '.join(gone[:-1]) + ' and ' + gone[-1]} go, with its cell, "
+                     f"its worktrees" + (f", its local branch {plan['branch']}" if would.get("delete_branch") else "")
+                     + (f" and the {refs} ref{'s' if refs != 1 else ''} MACH kept for it" if refs else "")
+                     + (f", and its earlier archive{'s' if len(earlier) != 1 else ''} ({', '.join(earlier)})" if earlier else "")
+                     + ". Nothing is archived or kept. Remote branches and GitHub are not touched. "
+                     "To keep an archive instead, a person asks for it with --keep-archive."),
+    })
+    return plan
+
+
+def earlier_archives(project: Path, ticket_id: str) -> List[str]:
+    """The archives an earlier cleanup of this ticket kept (.factory/archive/<ticket>.tar.gz and <ticket>-<n>.tar.gz), never a link."""
+    folder = project / ".factory" / "archive"
+    found = []
+    for path in sorted(folder.glob(f"{ticket_id}*.tar.gz")) if folder.is_dir() else []:
+        rest = path.name[len(ticket_id):-len(".tar.gz")]
+        if (rest == "" or re.fullmatch(r"-\d+", rest)) and path.is_file() and not path.is_symlink():
+            found.append(relative(project, path))
+    return found
 
 
 def survey_gates(cell: Cell, abandon: Optional[str], merged_as: Optional[str] = None) -> Dict[str, Any]:
@@ -1283,7 +1341,8 @@ def kept_refs_result(ticket_id: str, archive: str, plan: Dict[str, Any], bundled
 
 def cmd_plan(project: Path, args: argparse.Namespace) -> int:
     plan = survey(Cell(project, args.ticket_id), args.abandon, args.merged_as, args.archive_flag)
-    plan["next"] = (f"Show the user what will be removed, then: cleanup.py run {args.ticket_id}" + (" --abandon \"<the same reason>\"" if args.abandon is not None else "")
+    plan["next"] = (("Say in_words to the person first: the work is deleted for good. Then: " if plan.get("deletes_for_good") else "Show the user what will be removed, then: ")
+                    + f"cleanup.py run {args.ticket_id}" + (" --abandon \"<the same reason>\"" if args.abandon is not None else "")
                     + (f" --merged-as {plan['merged_as']}" if plan["merged_as"] else "")
                     + {"keep": " --keep-archive", "drop": " --no-archive"}.get(args.archive_flag or "", "")
                     if plan["allowed"] else "Not allowed yet. Resolve each refusal; do not work around it.")
@@ -1359,14 +1418,14 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         replans = None
     # With no archive kept here, what only the checkouts hold goes into Git before anything is removed.
     kept_refs_made: List[Dict[str, Any]] = []
-    if not keep:
+    if not keep and not plan.get("deletes_for_good"):
         try:
             kept_refs_made = keep_work_in_git(cell, plan, lanes)
         except CleanupError:
             if target is not None and target.is_file():
                 target.unlink()  # nothing was removed, so nothing is lost; the next run writes it again
             raise
-    if make:
+    if make and not plan.get("deletes_for_good"):
         # The archive is written and checked: a team that keeps its evidence elsewhere gets it now (records.publish_command, M13).
         # The outcome is recorded; a failure never stops cleanup, and never loses the archive it failed to send.
         published = publish(project, cell.ticket_id, target)
@@ -1380,7 +1439,7 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
                                  "reason": decision["reason"] + " records.publish_command did not send the archive, so it is kept here: nothing it held is lost."})
         elif published is not None:
             decision["published"] = bool(published.get("ok"))
-    elif problem:
+    elif problem and not plan.get("deletes_for_good"):
         published = {"ran": False, "ok": False, "note": problem}
     if published is not None:  # optional: present only when a publish command is set
         record["records_publish"] = published
@@ -1406,6 +1465,11 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         raise CleanupError(f"Could not remove {root}: {exc}. {kept}", code="cell-folder-not-removed")
     removed.append(relative(project, root))
     lanes_done = finish_lanes(cell, lanes) if lanes is not None else None
+    for name in plan["would"].get("delete_archives") or []:  # an abandoned ticket's earlier archives go with the rest of its work
+        path = project / name
+        if path.is_file() and not path.is_symlink() and path.resolve().parent == (project / ".factory" / "archive").resolve():
+            path.unlink()
+            removed.append(name)
 
     branch_deleted, note = False, None
     if plan["would"]["delete_branch"]:
@@ -1423,7 +1487,9 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
             replans_deleted.append(ref)
     kept_refs = [ref for ref in plan["would"]["delete_replan_refs"] if ref not in replans_deleted]
     if kept_refs:
-        replan_note = f"git kept the re-plan refs {', '.join(kept_refs)}; their commits are in the archive. Delete them yourself with git update-ref -d."
+        replan_note = (f"git kept the refs {', '.join(kept_refs)}: they moved since the plan was made. Delete them with git update-ref -d."
+                       if plan.get("deletes_for_good") else
+                       f"git kept the re-plan refs {', '.join(kept_refs)}; their commits are in the archive. Delete them yourself with git update-ref -d.")
 
     # What stays in Git for a person to look at or bring back, each with the commands that do it.
     in_git: List[Dict[str, Any]] = []
@@ -1438,6 +1504,9 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
                 in_git.append(kept_entry(project, cell.ticket_id, ref, sha, kept_ref_holds(ref), excludes, files="/lane-files/" in ref))
         for item in kept_refs_made:
             in_git.append(kept_entry(project, cell.ticket_id, item["ref"], item["commit"], item["holds"], excludes, files=item["files"]))
+    if plan.get("deletes_for_good"):  # an abandoned ticket: what was deleted, for a reader that tells a removed cell from an unreadable one
+        record["deleted"] = {"cell": True, "branch": bool(branch_deleted), "refs": len(replans_deleted), "archives": list(plan["would"].get("delete_archives") or []),
+                             "unmerged_commits": plan["deletes"]["unmerged_commits"], "uncommitted_files": plan["deletes"]["uncommitted_files"]}
     record["raised_to_person"] = list(plan["raised_to_person"])
     record["archive_kept"] = {key: decision.get(key) for key in ("kept", "setting", "chosen_by", "published", "reason")}
     branch_in_git = next((item for item in in_git if item["kind"] == "branch"), None)
@@ -1462,6 +1531,8 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         restore = None
     print(json.dumps({
         "status": "CLEANED", "ticket_id": cell.ticket_id, "outcome": plan["outcome"], "merged_as": plan["merged_as"], "archive": archive, "archive_members": len(members),
+        **({"deleted_for_good": plan["deletes"], "in_words": plan["in_words"].replace("deletes its work", "deleted its work").replace(" go, ", " went, ", 1)}
+           if plan.get("deletes_for_good") else {}),
         "archive_kept": record["archive_kept"], "raised_to_person": plan["raised_to_person"],
         "bundle": f"{cell.ticket_id}/branch.bundle" if bundled and archive else None,
         "restore": restore,
@@ -1476,7 +1547,8 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         "observe_due": observe["due"], "finished_since_last_observe_pass": observe["finished_since_last_pass"],
         "next": f"Set the ticket {cell.ticket_id} to {state}, using the ticket skill."
                 + (f" Then an observe pass is due ({observe['finished_since_last_pass']} tickets have finished since the last one): run the observe skill with --auto." if observe["due"] else ""),
-        **({"lanes": lanes_result(cell, lanes, lanes_done, archive, plan["default_branch"], [item for item in in_git if "lane" in item["name"]])}
+        **({"lanes": lanes_result(cell, lanes, lanes_done, archive, plan["default_branch"], [item for item in in_git if "lane" in item["name"]],
+                               deleted=bool(plan.get("deletes_for_good")))}
            if lanes is not None and lanes_done is not None else {}),
     }, indent=2, ensure_ascii=False))
     return 0
@@ -1678,11 +1750,11 @@ def build_parser() -> argparse.ArgumentParser:
                              ("run", cmd_run, "archive the cell, then remove its worktree, folder and local branch")):
         p = sub.add_parser(name, help=text)
         p.add_argument("ticket_id")
-        p.add_argument("--abandon", metavar="WHY", help="give up an unmerged ticket: its commits are archived as a git bundle and its uncommitted work as a patch, then removed")
+        p.add_argument("--abandon", metavar="WHY", help="abandon an unmerged ticket, on a person's explicit request: its work is deleted from this machine for good (with --keep-archive it is archived instead)")
         p.add_argument("--merged-as", metavar="COMMIT", help="the commit on the default branch that a squash or rebase merge of this ticket created")
         choice = p.add_mutually_exclusive_group()
         choice.add_argument("--keep-archive", dest="archive_flag", action="store_const", const="keep",
-                            help="a person's word: keep this ticket's archive, whatever cleanup.archive says")
+                            help="a person's word: keep this ticket's archive, whatever cleanup.archive says; for --abandon, the only way its work is kept")
         choice.add_argument("--no-archive", dest="archive_flag", action="store_const", const="drop",
                             help="a person's word: keep no archive of this ticket, whatever cleanup.archive says (its work stays in Git)")
         p.set_defaults(func=func)

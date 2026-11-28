@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-"""MACH's apps in the browser, opened with one command: Product Studio, and the Factory Floor.
+"""MACH's two apps in the browser: Product Studio (/mach-studio) and the Factory Floor (/mach floor).
 
     app.py                      Product Studio for this project, the release MACH has here, open in the browser
     app.py link                 the same, without a browser: a fresh link to open
     app.py stop                 stop this project's Product Studio
     app.py floor [link|stop]    the same three for the Factory Floor
     --no-browser  never open a browser      --json  answer in JSON      --project <folder>
+
+    app.py for-skill studio|run   what the studio and run skills' first line runs, with the words the person typed after
+                                  the command on standard input. It does something, and prints anything, only when those
+                                  words are exactly an app's own form: for studio, nothing at all (open), "link" or
+                                  "stop"; for run, "floor", "floor link", "floor stop" or "studio". Every other input
+                                  prints nothing, so the skill goes on as usual. What it prints stands between the lines
+                                  MACH-ANSWER-BEGIN and MACH-ANSWER-END. The words never reach a shell: the skill hands them over
+                                  in a quoted here-document, and they are only compared here.
 
 Every step is decided here, with no judgement left to whoever runs it:
 
@@ -82,8 +90,8 @@ class Stop(Exception):
 
 
 def mach_root() -> Path:
-    """The MACH this script belongs to: the plugin or checkout folder (skills/app/scripts/app.py), or, in a project
-    install, the project's .claude folder (.claude/skills/mach-app/scripts/app.py)."""
+    """The MACH this script belongs to: the plugin or checkout folder (skills/run/scripts/app.py), or, in a project
+    install, the project's .claude folder (.claude/skills/mach/scripts/app.py)."""
     return Path(__file__).resolve().parents[3]
 
 
@@ -105,9 +113,16 @@ def installed_version(root: Path, project: Path) -> Optional[str]:
         return None
 
 
-def command_name(root: Path) -> str:
-    """How a person types this command: /mach:app with the plugin, /mach-app in a project install."""
-    return "/mach:app" if (root / ".claude-plugin").is_dir() else "/mach-app"
+def plugin_form(root: Path) -> bool:
+    return (root / ".claude-plugin").is_dir()
+
+
+def command_name(root: Path, app: "App") -> str:
+    """How a person types the command that opens `app`: /mach-studio and /mach floor in a project install,
+    /mach:studio and /mach:run floor with the plugin."""
+    if app is STUDIO:
+        return "/mach:studio" if plugin_form(root) else "/mach-studio"
+    return "/mach:run floor" if plugin_form(root) else "/mach floor"
 
 
 def sibling_script(skill: str, script: str) -> Optional[Path]:
@@ -399,7 +414,7 @@ def named(app: App, version: Optional[str]) -> str:
 
 def act(app: App, action: str, project: Path, browser: bool, check_newer: bool = True) -> Dict[str, Any]:
     root = mach_root()
-    command = command_name(root) + (" floor" if app is FLOOR else "")
+    command = command_name(root, app)
     result: Dict[str, Any] = {"app": app.key, "action": action, "opened": False, "running": None, "version": None, "link": None,
                               "program": None, "updated_program": False, "log": None, "in_words": [], "problem": None}
     said: List[str] = result["in_words"]
@@ -561,8 +576,62 @@ def wait_for_fresh(folder: Path, used: str) -> Optional[str]:
     return None
 
 
-USAGE = ("MACH did not understand {words!r}. {command} opens Product Studio; {command} link gives its link without a browser; "
-         "{command} stop stops it; {command} floor does the same for the Factory Floor.")
+USAGE = ("MACH did not understand {words!r}. {studio} opens Product Studio; {studio} link gives its link without a browser; "
+         "{studio} stop stops it. {floor}, {floor} link and {floor} stop do the same for the Factory Floor.")
+
+ANSWER_BEGIN = "MACH-ANSWER-BEGIN"
+ANSWER_END = "MACH-ANSWER-END"
+EXECUTION_ENV = "MACH_EXECUTION_ID"  # set inside a supervised Factory execution, where no app is ever opened
+SKILL_FORMS = {
+    # (skill, the words typed after its command) -> (app, action)
+    ("studio", ""): ("studio", "open"),
+    ("studio", "link"): ("studio", "link"),
+    ("studio", "stop"): ("studio", "stop"),
+    ("run", "floor"): ("floor", "open"),
+    ("run", "floor link"): ("floor", "link"),
+    ("run", "floor stop"): ("floor", "stop"),
+    ("run", "studio"): ("studio", "open"),
+}
+WORDS_LIMIT = 4096  # more than any app form: a longer input is never one
+
+
+def skill_form(skill: str, typed: str) -> Optional[Tuple[str, str]]:
+    """The app and action the person's words name for this skill, or None when they are anything else. Case and the
+    spaces around and between words do not count; nothing else is forgiven."""
+    return SKILL_FORMS.get((skill, " ".join(typed.lower().split())))
+
+
+def terminal_line(root: Path) -> str:
+    studio = command_name(root, STUDIO)
+    return f"To work here in the terminal instead, type {studio} status, or say what you want after {studio}."
+
+
+def for_skill(skill: str, typed: str, project: Optional[Path]) -> str:
+    """What a skill's first line shows before the model replies: MACH's answer between its two lines, or "" (print
+    nothing) for any words that are not exactly an app's own form, and always inside a supervised Factory execution."""
+    form = skill_form(skill, typed)
+    if form is None or os.environ.get(EXECUTION_ENV):
+        return ""
+    app, action = APPS[form[0]], form[1]
+    project = project.resolve() if project else find_project(Path.cwd())
+    try:
+        said = list(act(app, action, project, browser=True)["in_words"])
+    except Stop as stop:
+        said = [str(stop)]
+    if app is STUDIO and action == "open":
+        said.append(terminal_line(mach_root()))
+    return "\n".join([ANSWER_BEGIN, *said, ANSWER_END]) + "\n"
+
+
+def read_typed(stream: Any) -> Optional[str]:
+    """The person's words from standard input, or None when there are none to read (a terminal) or too many."""
+    try:
+        if stream is None or stream.isatty():
+            return None
+        text = stream.read(WORDS_LIMIT + 1)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    return text if len(text) <= WORDS_LIMIT else None
 
 
 def parse(argv: List[str]) -> Tuple[argparse.Namespace, Optional[str]]:
@@ -577,7 +646,7 @@ def parse(argv: List[str]) -> Tuple[argparse.Namespace, Optional[str]]:
     for word in words:
         if word in ("floor", "observer", "factory-floor"):
             app = "floor"
-        elif word in ("studio", "product-studio", "app"):
+        elif word in ("studio", "product-studio"):
             app = "studio"
         elif word in ("open", "link", "stop"):
             action = word
@@ -587,12 +656,37 @@ def parse(argv: List[str]) -> Tuple[argparse.Namespace, Optional[str]]:
     return args, (" ".join(unknown) if unknown else None)
 
 
+def main_for_skill(argv: List[str], stdin: Any = None) -> int:
+    """`app.py for-skill <studio|run> [--project <folder>]`, the words on standard input. Always succeeds, so a skill
+    never fails to load because of it; anything unexpected prints nothing."""
+    skill = argv[0] if argv else ""
+    project = None
+    if len(argv) == 3 and argv[1] == "--project":
+        project = Path(argv[2])
+    elif len(argv) != 1:
+        return 0
+    if skill not in ("studio", "run"):
+        return 0
+    typed = read_typed(sys.stdin if stdin is None else stdin)
+    if typed is None:
+        return 0
+    try:
+        sys.stdout.write(for_skill(skill, typed, project))
+    except Exception:  # never stop a skill from loading; the fault recorder below still hears of it
+        return 0
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
-    args, unknown = parse(sys.argv[1:] if argv is None else argv)
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["for-skill"]:
+        return main_for_skill(argv[1:])
+    args, unknown = parse(argv)
     app = APPS[args.app]
     if unknown:
         result = {"app": app.key, "action": None, "opened": False, "running": None, "version": None, "link": None, "program": None,
-                  "updated_program": False, "log": None, "problem": USAGE.format(words=unknown, command=command_name(mach_root()))}
+                  "updated_program": False, "log": None,
+                  "problem": USAGE.format(words=unknown, studio=command_name(mach_root(), STUDIO), floor=command_name(mach_root(), FLOOR))}
         result["in_words"] = [result["problem"]]
         code = 2
     else:

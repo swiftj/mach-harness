@@ -426,7 +426,7 @@ class TallyTest(Base):
         code, done = self.tally()
         self.assertEqual((code, done["outcome"], done["round"]), (1, "ESCALATE", 3))
         self.assertIn("blocked-requires-sme", done["next"])
-        self.assertIn("Do not send it back to the build station", done["next"])
+        self.assertIn("A person carries it on with a fix", done["next"])
         cell = self.cell_json()
         self.assertEqual((cell["stage"], cell["review"]), ("blocked", "ESCALATE"))
         self.assertIn("round 3 of 3", (folder / "findings.md").read_text())
@@ -529,7 +529,8 @@ class HumanApprovalTest(Base):
         self.assertEqual([r["data"] for r in log if r["type"] == "station.exited"][-1], {"outcome": "sent-back", "stage": "built"})
         self.assertNotIn("must name the field", (self.cellroot / "lifecycle.jsonl").read_text(), "the person's reason is never in the log")
 
-    def test_sending_back_in_the_last_round_escalates(self):
+    def test_sending_back_in_the_last_round_gives_the_builder_one_more_round_with_the_reason_as_guidance(self):
+        """A person's send-back never stops the ticket: their reason is the guidance for one more round, in the same step."""
         self.config({"review": {"max_loops": 1}})
         self.verified()
         self.edit_json("cell.json", risk="High")
@@ -537,9 +538,16 @@ class HumanApprovalTest(Base):
         self.cast()
         self.assertEqual(self.tally()[1]["outcome"], "AWAITING_HUMAN")
         done = self.r_ok("send-back", TICKET, "--by", "Dana Smith", "--reason", "The error text must name the field.")
-        self.assertEqual(done["outcome"], "ESCALATE")
-        self.assertIn("blocked-requires-sme", done["next"])
-        self.assertEqual((self.cell_json()["stage"], self.cell_json()["review"]), ("blocked", "ESCALATE"))
+        self.assertEqual(done["outcome"], "REJECTED")
+        self.assertEqual((done["carried_on"]["round"], done["carried_on"]["max_rounds"]), (2, 2))
+        self.assertIn("build revise", done["next"])
+        self.assertNotIn("blocked-requires-sme", done["next"])
+        self.assertEqual((self.cell_json()["stage"], self.cell_json()["review"]), ("built", "REJECTED"))
+        self.assertIn("> The error text must name the field.", Path(done["carried_on"]["guidance"]).read_text())
+        import run
+        step = run.next_step(run.Project(self.project), TICKET, False)
+        self.assertEqual(step["action"], "revise")
+        self.assertTrue(step["guidance"].endswith("person-guidance-1.md"))
 
     def test_sign_off_is_recorded_and_approves_the_cell(self):
         self.awaiting()

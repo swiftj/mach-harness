@@ -1211,6 +1211,32 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 	if round != nil {
 		c.Round = round
 	}
+	// A person carried the ticket on, or started the Factory (data.carried_on): the round limit and the
+	// rounds that no longer count from now on. The record's own round stays as recorded (its number since
+	// the ticket began); a person reads it less RoundBase.
+	var carried struct {
+		CarriedOn *struct {
+			Outcome   string `json:"outcome"`
+			Round     *int64 `json:"round"`
+			Max       *int64 `json:"max"`
+			Number    *int64 `json:"number"`
+			Base      *int64 `json:"base"`
+			By        string `json:"by"`
+			StoppedAt string `json:"stopped_at"`
+		} `json:"carried_on"`
+	}
+	if e.DataAs(&carried); carried.CarriedOn != nil {
+		co := carried.CarriedOn
+		if co.Max != nil {
+			c.RoundMax = co.Max
+		}
+		if co.Base != nil {
+			c.RoundBase = co.Base
+		}
+		if len(c.CarriedOn) < maxListPerCell {
+			c.CarriedOn = append(c.CarriedOn, &CarriedOn{Outcome: co.Outcome, Round: co.Round, Max: co.Max, Number: co.Number, Base: co.Base, By: co.By, StoppedAt: co.StoppedAt, At: st})
+		}
+	}
 	switch e.Type {
 	case "station.entered":
 		var d struct {

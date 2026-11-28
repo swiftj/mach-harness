@@ -50,6 +50,7 @@ func run(args []string) error {
 	epics := fs.Int("epics", 0, "with --analytics: epics (default: one per eight cells)")
 	maxPar := fs.Int("max-parallel", 0, "with --analytics: the supervisor's max_parallel (default 4)")
 	profile := fs.String("profile", "", "with --analytics: \"realistic\" for real-time durations, a working week and provenance configurations (the history is as long as the work; --hours is not used)")
+	stopped := fs.Bool("stopped", false, "add tickets stopped for a person after their last round, one carried on with one more round and one given a fresh set of rounds; not with --analytics")
 	m15 := fs.Bool("m15", false, "add the M13 and M14 states the Factory Floor shows (a conflict with main, a policy concern, a merge-time recheck with a repeat review round and a design mock, a slice waiting for its mocks, Jira keys, change records); not with --analytics")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -76,7 +77,10 @@ func run(args []string) error {
 		}
 		return err
 	}
-	o := synth.Options{Out: abs, Cells: *cells, Events: *events, Seed: *seed, Hours: *hours, AgentsPerExecution: *agents, M15: *m15}
+	o := synth.Options{Out: abs, Cells: *cells, Events: *events, Seed: *seed, Hours: *hours, AgentsPerExecution: *agents, M15: *m15, Stopped: *stopped}
+	if *stopped && *analytics {
+		return fmt.Errorf("--stopped does not apply with --analytics")
+	}
 	if *m15 && *analytics {
 		return fmt.Errorf("--m15 does not apply with --analytics")
 	}

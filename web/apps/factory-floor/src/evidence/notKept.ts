@@ -12,6 +12,12 @@ export const NOT_KEPT_WORDS = "The evidence files were not kept after cleanup (c
 /** One file a check names that was not kept: the change record still names it with its SHA-256. */
 export const NOT_KEPT_FILE_WORDS = "This file was not kept after cleanup (cleanup.archive). The change record merged with the ticket names it with its SHA-256.";
 
+/** An abandoned ticket: abandoning deletes its work, nothing of it was merged. */
+export const ABANDONED_WORDS = "This ticket was abandoned, and its work was deleted when it was abandoned. Nothing of it was merged.";
+
+/** One file a check names, of an abandoned ticket. */
+export const ABANDONED_FILE_WORDS = "This file was deleted with the ticket's work when it was abandoned.";
+
 /** The lanes of a build whose files were not kept. */
 export const NOT_KEPT_LANES_WORDS = "Built in lanes, but the cell's files were not kept after cleanup (cleanup.archive), so its lanes are not shown.";
 

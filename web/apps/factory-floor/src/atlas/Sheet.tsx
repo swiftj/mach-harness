@@ -9,6 +9,7 @@ import { memo } from "react";
 import { AgentHead, StateMark, fc, project, round, type Lod, type MarkState } from "@mach/ui";
 import { epicsInArrivalOrder, type SceneLog } from "../sim";
 import { useSceneStore } from "../scene";
+import { wallMoment } from "../shell/time";
 
 const ZONES_X = "ABCDEFGHJK";
 
@@ -97,8 +98,7 @@ const LIVE_KEY: Array<[MarkState, string]> = [
 ];
 
 function hhmm(t: number): string {
-  const d = new Date(t);
-  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")} UTC`;
+  return wallMoment(t).inline;
 }
 
 /**

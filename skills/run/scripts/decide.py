@@ -26,6 +26,9 @@ Entry point, wired in by run.py:
     held_by        callable(ticket_id) -> a sentence, or None when no live worker holds the ticket's claim (run.py's
                    held_by_worker: a claim a stopped Factory execution left is nobody's); by default every fresh claim counts
     factory_run    callable(ticket_id) -> whether that claim is a live Factory run's, so "Take it over" says the run is ended
+    mine           the holder of the conversation asking (run.py decide --holder): its own claim is never "another worker"
+    at_stake       callable(ticket_id) -> {"unmerged_commits", "uncommitted_files"} or None: what abandoning deletes that is nowhere
+                   else (run.py's read-only git queries), said in the abandon option's `does`
 
 The result: `nothing_waiting`, `order` (tickets a person's approval or merge unblocks first, then stuck ones; stable
 otherwise), `tickets` (one record each, in that order) and `not_waiting` (a plain answer for each named ticket that
@@ -40,7 +43,7 @@ Each option has `key`, `label` (one to five words), `does` (one sentence), `rout
 it out, or null for "wait"), `needs_reason`, `recommended`, `do` (whether `run.py decide do` carries it out by itself;
 act.py), `needs` (the other inputs it takes: "test_cmd", "answers"), `confirm` (a decision a person confirms first: it
 cannot be undone, or it stops another worker) and `takes_over` (act.py takes the step from the other worker as it records
-this decision, so the Factory can run the ticket). At most three options; "Skip for now" is the skill's own and is never listed here. `recommendation`
+this decision, so the Factory can run the ticket). At most three options and, last, "Abandon the ticket" (never the only one, first or recommended); "Skip for now" is the skill's own and is never listed here. `recommendation`
 is {"basis": "rule", "why": ...} only where a rule decides it, never for approving or rejecting a change; otherwise
 {"basis": "judgement"}.
 
@@ -72,6 +75,7 @@ DATA_FIELDS = ("situation.title", "situation.reason", "situation.causes[].detail
                "situation.parked.reason", "situation.approval_reasons[]", "situation.pull_request",
                "situation.adr.title", "situation.adr.reason", "situation.adr_problems[]", "situation.missing_topics[].topic", "situation.proposed[].title", "situation.question",
                "situation.conflict.files[]", "situation.concerns[].statement", "situation.concerns[].why", "situation.concerns[].owner",
+               "situation.stopped.failed[].id", "situation.stopped.failed[].text", "situation.stopped.failed[].note", "guidance",
                "questions[].text", "questions[].follow_up")
 # A stop for an architecture decision, by the routing sheet's `needs`, and the waiting state it is walked as.
 ADR_STATES = {"adr-decision": "adr-conflict", "adr-acceptance": "adr-acceptance", "adr-fix": "adr-fix", "adr-baseline": "adr-baseline"}
@@ -88,8 +92,8 @@ SUMMARY = {
     "policy-owner": "The spec flags a policy statement this slice cannot meet; it waits for the policy's owner, or for the spec to change so it is met.",
     "product-answer": "The contract engineer found a defect in the slice's spec; the question waits for the product manager on the slice's issue.",
     "build-gate": "The build stopped at a gate.",
-    "escalated": "The ticket failed its last judging round and was escalated: the line will not run it again.",
-    "stuck": "The cell is in a state the line cannot handle.",
+    "escalated": "The ticket failed its last round and stopped for a person. A person can carry it on with a fix: one more round for the builder, on the same branch.",
+    "stuck": "The cell is in a stage the line does not know, so it stopped for a person, who can carry it on.",
     "bronze": "The repository's readiness tier is Bronze, so only hardening tickets may be built.",
     "parked": "The Factory supervisor took this ticket out of automatic execution until a person says to carry on.",
     "worker-in-cell": "Another worker was handed this ticket's step and may still be at work in the cell; nothing else waits on a person.",
@@ -185,12 +189,15 @@ def claim_minutes(config: Dict[str, Any]) -> int:
     return value if type(value) is int and value >= 1 else CLAIM_MINUTES
 
 
-def fresh_claim(cellroot: Path, stage: Optional[str], config: Dict[str, Any], now: datetime) -> Optional[Dict[str, Any]]:
+def fresh_claim(cellroot: Path, stage: Optional[str], config: Dict[str, Any], now: datetime, mine: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """The cell's claim (claim.json, design 5.1) when it is fresh: made at the cell's current stage, and made or renewed
-    less than factory.claim_minutes ago. The holder token is never passed on."""
+    less than factory.claim_minutes ago, and not the asker's own (`mine`, the holder of the conversation asking). The holder
+    token is never passed on."""
     claim = load_json(cellroot / "claim.json")
     if not isinstance(claim, dict) or not stage or claim.get("stage") != stage:
         return None
+    if mine and claim.get("holder") == mine:
+        return None  # the person's own claim, from their own /mach <ticket>: nobody else is at work
     moments = [moment for moment in (parse_time(claim.get("at")), parse_time(claim.get("renewed_at"))) if moment]
     if not moments:
         return None
@@ -203,13 +210,11 @@ def fresh_claim(cellroot: Path, stage: Optional[str], config: Dict[str, Any], no
 
 
 def clock(moment_text: Any, now: datetime) -> str:
-    """A time as a person reads it: 02:47 UTC on the day it is now, else with its date."""
+    """A time as a person reads it, always with its date: 2026-11-27 02:47 UTC (a UTC time alone reads as the wrong day elsewhere)."""
     moment = parse_time(moment_text)
     if moment is None:
         return "an earlier time"
-    moment = moment.astimezone(timezone.utc)
-    day = "" if moment.date() == now.astimezone(timezone.utc).date() else moment.strftime("%Y-%m-%d ")
-    return f"{day}{moment.strftime('%H:%M')} UTC"
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def claim_warning(claim: Dict[str, Any], now: datetime) -> str:
@@ -263,12 +268,14 @@ def option(key: str, label: str, does: str, route: Optional[str], needs_reason: 
 
 # What `run.py decide do` (act.py) carries out by itself, per option key. The rest need an agent or a conversation:
 # `decide do` answers them with the command to run, and changes nothing.
-CARRIED_OUT = ("approve", "send-back", "merge", "abandon", "replan", "retry", "run", "revise", "answers", "wait", "take-over")
+CARRIED_OUT = ("approve", "send-back", "merge", "abandon", "replan", "retry", "run", "revise", "answers", "wait", "take-over", "carry-on")
 # Decisions a person confirms first: they cannot be undone, or they stop another worker.
 CONFIRM_FIRST = ("approve", "merge", "abandon", "take-over")
 # Decisions that hand the ticket to the Factory at the stage it is at. While another worker's claim on that stage is fresh,
 # the Factory would be held by it, so act.py takes the step over as it records the decision: the person asked for it to run.
-TAKES_OVER = ("retry", "run", "revise", "set-test-command")
+TAKES_OVER = ("retry", "run", "revise", "set-test-command", "carry-on")
+# Optional free text an option takes besides its required `needs`: "guidance", what the builder should do differently.
+TAKES = {"carry-on": ["guidance"]}
 
 
 def mark(options: List[Dict[str, Any]], state: str, claimed: bool = False) -> None:
@@ -288,7 +295,7 @@ def mark(options: List[Dict[str, Any]], state: str, claimed: bool = False) -> No
             can = False
         needs = ["test_cmd"] if key == "set-test-command" else ["answers"] if key == "answers" else []
         takes = key == "take-over" or (claimed and can and key in TAKES_OVER)
-        item.update({"do": can, "needs": needs, "confirm": key in CONFIRM_FIRST, "takes_over": takes})
+        item.update({"do": can, "needs": needs, "takes": list(TAKES.get(key, [])), "confirm": key in CONFIRM_FIRST, "takes_over": takes})
 
 
 OPEN_QUESTIONS_RE = re.compile(r"^##\s+Open questions\s*$", re.IGNORECASE)
@@ -338,10 +345,51 @@ def answers_pending(cellroot: Path, cell: Dict[str, Any]) -> bool:
 
 
 def abandon(ticket: str, extra: str = "") -> Dict[str, Any]:
-    return option("abandon", "Abandon the ticket",
-                  "The cleanup station removes the cell, keeping its unmerged commits (in its archive, or as its branch where no archive is kept) and "
-                  "closes the ticket as abandoned" + extra + ".",
-                  f'abandon {ticket} "<why>"', needs_reason=True)
+    """Abandon: never the only option, never first and never recommended. Its `does` gets what is deleted (work_at_stake) in record()."""
+    item = option("abandon", "Abandon the ticket", abandon_does(None, extra), f'abandon {ticket} "<why>"', needs_reason=True)
+    item["_extra"] = extra
+    return item
+
+
+def abandon_does(stake: Optional[Dict[str, Any]], extra: str = "") -> str:
+    """One sentence: the work is deleted for good, how much of it is nowhere else, and that nothing is archived."""
+    counted = ""
+    if isinstance(stake, dict) and isinstance(stake.get("unmerged_commits"), int) and isinstance(stake.get("uncommitted_files"), int):
+        commits, files = stake["unmerged_commits"], stake["uncommitted_files"]
+        counted = (f", with its {commits} unmerged commit{'s' if commits != 1 else ''} and {files} uncommitted file{'s' if files != 1 else ''}")
+    return ("The cleanup station deletes the ticket's work from this machine for good (its cell, worktrees, local branch and the refs MACH kept "
+            f"for it{counted}), keeps no archive, and closes the ticket as abandoned{extra}.")
+
+
+# CARRY_ON_FIRST, the one rule: wherever carry-on is offered it is the first option and the recommended one, before a security
+# exception (new or renewed) and before anything else. A fix keeps the work moving whatever is decided about the finding; an
+# exception is a person's acceptance of a real finding, never recommended, so it comes second.
+def carry_on_option(ticket: str) -> Dict[str, Any]:
+    item = option("carry-on", "Carry on with a fix",
+                  "The builder gets one more round on the same branch, with the last findings and what the person says to do; nothing already "
+                  "built is redone, and verification and review then run again as normal.", f'carry-on {ticket} "<guidance>"')
+    item["recommended"] = True
+    return item
+
+
+def stopped_facts(root: Path, cellroot: Path, report: Dict[str, Any]) -> Dict[str, Any]:
+    """What must be fixed, for a screen: which station failed last, the rounds, the items that failed with their text, and the
+    findings file. Every text is the stations' data, already bounded by explain.clean."""
+    failure = report.get("last_failure") if isinstance(report.get("last_failure"), dict) else {}
+    failed = []
+    for item in report.get("causes") or []:
+        if not isinstance(item, dict) or item.get("kind") in ("blocked", "build_gate", "waiting_for_person"):
+            continue
+        req = item.get("requirement") if isinstance(item.get("requirement"), dict) else {}
+        ident = item.get("id") or item.get("ref")
+        if req.get("text"):
+            text, note = req.get("text"), item.get("detail")
+        else:
+            text, note = item.get("detail"), item.get("rule")
+        failed.append({"id": explain.clean(ident, 80), "text": explain.clean(text), "note": explain.clean(note)})
+    findings = report.get("findings_file")
+    return {"station": failure.get("station"), "round": {"used": report.get("rounds_used"), "max": report.get("max_rounds")},
+            "failed": failed[:MAX_CAUSES], "findings_file": relative(root, cellroot / findings) if isinstance(findings, str) and findings else None}
 
 
 def run_again(ticket: str, does: str, label: str = "Run it again") -> Dict[str, Any]:
@@ -428,7 +476,7 @@ def situation(state: str, info: Dict[str, Any], report: Dict[str, Any], cell: Di
 
 def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, Any], config: Dict[str, Any],
              parked: Dict[str, Dict[str, Any]], now: datetime, named: bool = False,
-             held_by: Optional[Callable[[str], Optional[str]]] = None) -> Optional[str]:
+             held_by: Optional[Callable[[str], Optional[str]]] = None, mine: Optional[str] = None) -> Optional[str]:
     """Which waiting state the ticket is in, read from the stations' own files; None when it is not waiting on a person."""
     cellroot = root / ".factory" / "worktrees" / ticket
     cell = load_json(cellroot / "cell.json")
@@ -476,7 +524,7 @@ def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, An
             return "build-gate"
     if ticket in parked:
         return "parked"
-    held = isinstance(cell, dict) and fresh_claim(cellroot, stage, config, now) and (held_by is None or held_by(ticket))
+    held = isinstance(cell, dict) and fresh_claim(cellroot, stage, config, now, mine) and (held_by is None or held_by(ticket))
     if info.get("needs") == "worker-in-cell" or held:
         return "worker-in-cell"  # it waits for nothing but the other worker: a person may let it carry on or take it over
     return None
@@ -484,7 +532,8 @@ def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, An
 
 def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Dict[str, Any], config: Dict[str, Any],
            parked: Dict[str, Dict[str, Any]], intent_skill: str, now: datetime, run_skill: str = "/mach",
-           held_by: Optional[Callable[[str], Optional[str]]] = None, factory_run: Optional[Callable[[str], bool]] = None) -> Dict[str, Any]:
+           held_by: Optional[Callable[[str], Optional[str]]] = None, factory_run: Optional[Callable[[str], bool]] = None,
+           at_stake: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None, mine: Optional[str] = None) -> Dict[str, Any]:
     cellroot = root / ".factory" / "worktrees" / ticket
     cell = load_json(cellroot / "cell.json", {}) or {}
     cell = cell if isinstance(cell, dict) else {}
@@ -497,7 +546,7 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
     warnings: List[str] = []
     # Another worker's fresh claim is said, never a reason to hold a decision back. A claim a stopped Factory execution
     # left is nobody's (held_by says so), so it is not said.
-    claim = fresh_claim(cellroot, stage, config, now) if cell else None
+    claim = fresh_claim(cellroot, stage, config, now, mine) if cell else None
     if claim and held_by is not None and not held_by(ticket):
         claim = None
     if claim:
@@ -515,13 +564,14 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
             options.append(option("approve", "Approve the change",
                                   "The review station records the person's approval of this round, and the line carries the ticket on to its next step.",
                                   f"approve {ticket}"))
-            last = type(decision.get("round")) is int and decision["round"] >= explain.max_rounds(config)
-            options.append(option("send-back", "Send it back",
-                                  ("The review station records the person's reason and, because this is the ticket's last round, escalates it instead of building again."
-                                   if last else "The review station records the person's reason as the finding to answer, and the builder revises; it uses one of the ticket's rounds."),
-                                  f'send-back {ticket} "<why>"', needs_reason=True))
         else:
             facts["note"] = "This round's findings file is missing, so approval is not offered: a person sees the findings before approving."
+        last = type(decision.get("round")) is int and decision["round"] - explain.rounds_base(cellroot) >= explain.max_rounds(config, cellroot)
+        options.append(option("send-back", "Send it back",
+                              ("The review station records the person's reason, and as this is the ticket's last round the builder also gets one more "
+                               "round, with the reason as the finding and the guidance."
+                               if last else "The review station records the person's reason as the finding to answer, and the builder revises; it uses one of the ticket's rounds."),
+                              f'send-back {ticket} "<why>"', needs_reason=True))
         options.append(abandon(ticket))
     elif state == "merge":
         options.append(option("merge", "Merge it now",
@@ -598,6 +648,15 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
     elif state in ("escalated", "stuck"):
         if report.get("findings_file"):
             show_first.append(relative(root, cellroot / report["findings_file"]))
+        facts["stopped"] = stopped_facts(root, cellroot, report)
+        build = load_json(cellroot / "build.json", {}) or {}
+        if isinstance(build, dict) and build.get("tasks"):
+            options.append(carry_on_option(ticket))
+        elif replan_allowed(cellroot, stage):
+            options.append(replan(ticket))
+        else:
+            options.append(run_again(ticket, "The line reads the cell's records again in this conversation and carries it on from where they say it is.",
+                                     "Look at it again"))
         veto = exception_offer(root, ticket) if state == "escalated" else None
         if veto and veto.get("mode") == "new":
             facts["vetoing"] = list(veto["open"])
@@ -618,6 +677,7 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
         facts["conflict"] = {"files": [explain.clean(name, 200) for name in conflict.get("files") or [] if isinstance(name, str)][:10],
                              "folder": explain.clean(conflict.get("folder"), 300), "during": explain.clean(conflict.get("during"), 20)}
         options.append(run_again(ticket, "After a person merges the main branch into the ticket's branch in that folder, resolves the conflict and commits it, "
+
                                  "the line carries the ticket on from where it stopped, under the same gates.", "Resolve it, then carry on"))
         if replan_allowed(cellroot, stage):
             options.append(replan(ticket))
@@ -627,6 +687,15 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
         facts["expired"] = [explain.clean(ref, 40) for ref in info.get("exceptions") or []][:10]
         if veto and veto.get("mode") == "renew":
             options.append(exception_option(ticket, veto))
+        build = load_json(cellroot / "build.json", {}) or {}
+        if isinstance(build, dict) and build.get("tasks"):
+            item = carry_on_option(ticket)
+            item.update({"label": "Let the builder fix it",
+                         "does": "The builder gets a round on the same branch to fix the security finding, with what the person says to do; nothing "
+                                 "already built is redone, and verification and review then run again as normal."})
+            options.insert(0, item)  # CARRY_ON_FIRST
+            facts["stopped"] = stopped_facts(root, cellroot, report)
+            facts["stopped"]["station"] = facts["stopped"]["station"] or "review"  # the security veto stands again
         options.append(abandon(ticket))
     elif state == "bronze":
         options.append(option("audit", "Audit the repository again",
@@ -715,7 +784,15 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
     if ticket in parked and state != "parked":
         facts["parked"] = {"reason": explain.clean(parked[ticket].get("reason")), "at": explain.clean(parked[ticket].get("at"), 40),
                            "note": "The Factory supervisor also holds this ticket; it runs it again only after a person says so (factory resume --retry)."}
-    options = options[:3]
+    # Never a state with no way forward but abandoning: abandon is never the only option, never first and never recommended.
+    if options and all(item["key"] == "abandon" for item in options):
+        options.insert(0, run_again(ticket, "The line reads the ticket's records again and carries it on from where they say it is.", "Check it again"))
+    ahead = [item for item in options if item["key"] != "abandon"]
+    given_up = [item for item in options if item["key"] == "abandon"]
+    options = ahead[:3] + given_up[:1]  # abandon, where it is offered, comes last
+    for item in given_up:
+        item["recommended"] = False
+        item["does"] = abandon_does(at_stake(ticket) if at_stake is not None and cell else None, item.pop("_extra", ""))
     if rule and options:
         options[0]["recommended"] = True
     mark(options, state, claimed=bool(claim))
@@ -736,7 +813,8 @@ def not_waiting(ticket: str, info: Dict[str, Any]) -> Dict[str, Any]:
 def main(ticket_ids: Sequence[str], root: Path, *, config: Dict[str, Any], next_step: Callable[[str], Dict[str, Any]],
          intent_skill: str = "/mach-intent", explain_facts: Optional[Callable[[str, Dict[str, Any]], Dict[str, Any]]] = None,
          now: Optional[datetime] = None, run_skill: str = "/mach", held_by: Optional[Callable[[str], Optional[str]]] = None,
-         factory_run: Optional[Callable[[str], bool]] = None) -> Dict[str, Any]:
+         factory_run: Optional[Callable[[str], bool]] = None, at_stake: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
+         mine: Optional[str] = None) -> Dict[str, Any]:
     """Every ticket waiting on a person (or the ones named), with its options, in the order to walk them."""
     root = Path(root)
     config = config if isinstance(config, dict) else {}
@@ -751,12 +829,12 @@ def main(ticket_ids: Sequence[str], root: Path, *, config: Dict[str, Any], next_
     for ticket in named or open_tickets(root):
         info = next_step(ticket)
         report = facts(ticket, info)
-        state = classify(root, ticket, info, report, config, parked, moment, named=bool(named), held_by=held_by)
+        state = classify(root, ticket, info, report, config, parked, moment, named=bool(named), held_by=held_by, mine=mine)
         if state is None:
             if named:
                 answers.append(not_waiting(ticket, info))
             continue
-        waiting.append(record(root, ticket, state, info, report, config, parked, intent_skill, moment, run_skill, held_by, factory_run))
+        waiting.append(record(root, ticket, state, info, report, config, parked, intent_skill, moment, run_skill, held_by, factory_run, at_stake, mine))
     waiting = [item for _, item in sorted(enumerate(waiting), key=lambda pair: (pair[1]["state"] not in UNBLOCKED_BY_A_PERSON, pair[0]))]
     return {"reads_only": True, "nothing_waiting": not waiting, "order": [item["ticket_id"] for item in waiting], "tickets": waiting,
             "not_waiting": answers, "data_fields": list(DATA_FIELDS), "data_note": DATA_NOTE,

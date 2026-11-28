@@ -8,7 +8,7 @@ import { EPIC, SCENARIO, epicsInArrivalOrder } from "../sim";
 import { useScene, useSceneStore, type Workspace } from "../scene";
 import { SourceStamp } from "./SourceBadge";
 import { useSource } from "./source/context";
-import { utcClock, utcDate } from "./vocab";
+import { When } from "./When";
 
 /**
  * The simulation's permanent label (the M6.0 stamp), kept for places that only ever show the
@@ -83,7 +83,7 @@ function RealRun({ compact }: { compact?: boolean }) {
       ) : null}
       {compact || !held ? null : (
         <span className="hidden min-w-0 truncate text-caption text-ink-subtle min-[1360px]:inline">
-          History held from {utcDate(start)}, {utcClock(start)} UTC
+          History held from <When t={start} inline />
         </span>
       )}
     </div>

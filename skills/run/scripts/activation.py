@@ -125,6 +125,43 @@ def why_not(raw: Dict[str, Any], pol: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+# A person's pull, start, resume or decision is their word that the work runs. When the only thing holding the supervisor is
+# this machine's own setting to observe (an older authorization, or a person's earlier choice), that word sets it to supervised.
+# The project's own restrictions (factory.supervisor, factory.autonomy_ceiling, a security-review problem), a person's pause and
+# a person's disable still hold, and are said with the setting that changes them.
+OBSERVE_LIFTED = "This machine was set to observe only; MACH set it to supervised, as you asked for the work to run."
+PERSON_STARTS = ("pull", "decide", "resume", "factory start")
+
+
+def held_only_by_machine_observe(raw: Dict[str, Any], config: Dict[str, Any]) -> bool:
+    """Whether this machine's own autonomy setting (observe) is the one thing between a person and the supervisor starting."""
+    if raw.get("source") != "local-file" or not raw.get("enabled") or raw.get("autonomy") != "observe":
+        return False
+    would = {**raw, "autonomy": "supervised"}
+    return why_not(would, policy_module.effective(would, config)) is None
+
+
+def lift_machine_observe(ctx: Context, via: str) -> Optional[str]:
+    """On a person's start: set this machine's autonomy to supervised when observe is all that holds the Factory, record that
+    it was done, and return the one sentence to say; None when nothing was changed."""
+    raw = policy_module.read(ctx.root)
+    if not held_only_by_machine_observe(raw, ctx.config):
+        return None
+    raw["autonomy"] = "supervised"
+    policy_module.save(ctx.root, raw)
+    if ctx.line is not None:
+        with contextlib.suppress(Exception):  # the setting is changed either way; the event is the record of it
+            with ctx.line.lock("activation"):
+                ledger = ctx.line.ledger()
+                ctx.line.runner_id = raw.get("runner_id")
+                ctx.line.event_source = "engineer"
+                ctx.line.emit(ledger, "factory.activated", autonomy="supervised", by=person(ctx), via=via, limits=raw.get("limits") or {},
+                              allow_merge=bool(raw.get("allow_merge")), persistent=bool(raw.get("persistent")), backlog=None,
+                              excluded_slices=list(raw.get("excluded_slices") or []))
+                ctx.line.save(ledger)
+    return OBSERVE_LIFTED
+
+
 def status(ctx: Context) -> Dict[str, Any]:
     """Everything about the Factory on this machine. Reads only: asking never enables, wakes or dispatches anything."""
     raw = policy_module.read(ctx.root)
@@ -250,7 +287,13 @@ def enable(ctx: Context, args: Any) -> Dict[str, Any]:
                                              ("max_budget_usd_per_run", args.budget_per_run), ("max_budget_usd_per_day", args.budget_per_day),
                                              ("max_attempts", args.max_attempts), ("poll_seconds", args.poll_seconds)) if value is not None}
     base = previous or {}
-    request = {"autonomy": args.autonomy or base.get("autonomy") or "supervised",
+    # A person's start runs work: without --autonomy it is supervised, even where this machine was set to observe before, when that
+    # setting is all that holds it (the same check as pull's hand-over). Where the project keeps the Factory to observing, this
+    # machine's own setting is left as it was, and the answer names the project's setting.
+    machine_only = bool(previous) and held_only_by_machine_observe(raw, ctx.config)
+    lifted = OBSERVE_LIFTED if not args.autonomy and base.get("autonomy") == "observe" and machine_only else None
+    keep_observe = not args.autonomy and base.get("autonomy") == "observe" and not machine_only
+    request = {"autonomy": args.autonomy or ("observe" if keep_observe else "supervised"),
                "limits": {**(base.get("limits") or {}), **asked},
                "allow_merge": False if args.no_merge else base.get("allow_merge", True),
                "auto_sync": bool(args.auto_sync or base.get("auto_sync")), "persistent": bool(args.persistent or base.get("persistent")),
@@ -280,12 +323,20 @@ def enable(ctx: Context, args: Any) -> Dict[str, Any]:
             policy_module.save(ctx.root, pol)
             agent = {"error": str(exc)}
     started = start_background(ctx)  # factory start (= enable): a supervisor that outlives the session
-    return {"ready": True, "enabled": True, "updated": previous is not None, "factory": pol["autonomy"], "policy": describe(pol), "summary": summary, "checks": results,
+    after = policy_module.read(ctx.root)
+    in_force = policy_module.effective(after, ctx.config)
+    held = why_not(after, in_force)  # the project's own setting, said with where to change it
+    if held:  # every field says what is in force: observing, held by the project's setting, and the one thing that changes it
+        summary = summarize({**request, "autonomy": in_force.get("autonomy") or "observe"})
+    return {"ready": True, "enabled": True, "updated": previous is not None, "factory": in_force.get("autonomy") if held else pol["autonomy"],
+            "policy": describe(in_force if held else pol), "summary": summary, "checks": results,
             "git_hooks": hooks, "persistent_service": agent,
             "supervisor": started["supervisor"], "pid": started.get("pid"), "why_not": started.get("why_not"),
             **({"already_running": started["already_running"]} if started.get("already_running") else {}),
-            "in_words": started.get("in_words") or started.get("why_not"),
-            "next": ("The Factory is on for this machine only, and runs in the background until stopped. /mach pull hands it ready work; "
+            "in_words": " ".join(part for part in (lifted, held or started.get("in_words") or started.get("why_not")) if part),
+            **({"held_by": held} if held else {}),
+            **({"observe_lifted": lifted} if lifted else {}),
+            "next": (held if held else "The Factory is on for this machine only, and runs in the background until stopped. /mach pull hands it ready work; "
                      "/mach factory stop stops it."),
             "factory_started": started["supervisor"] in ("started", "converted", "already-running", "service")}
 
@@ -362,8 +413,14 @@ def carry_on(ctx: Context, tickets: Sequence[str] = (), start: bool = True, star
         raw = policy_module.read(ctx.root)
         pol = policy_module.effective(raw, ctx.config)
         reason = why_not(raw, pol)
+        lifted = None
+        if reason and started_by in PERSON_STARTS and held_only_by_machine_observe(raw, ctx.config):
+            lifted = lift_machine_observe(ctx, started_by)  # a person's word that the work runs: observe on this machine was all that held it
+            reason = None if lifted else reason
         if reason:
             return {"supervisor": "none", "pid": None, "why_not": reason, **({"given": [], "not_given": []} if tickets else {})}
+        if lifted:
+            return {**carry_on(ctx, tickets=tickets, start=start, started_by=started_by), "observe_lifted": lifted}
         if tickets:
             will_take = bool(ctx.sup.lease.running()) or (start and bool(service.find_session_pid()))
             given, kept = give_to_supervisor(ctx, tickets) if will_take else ([], [])
@@ -431,6 +488,8 @@ class HandOver:
     def __init__(self, ctx: Context, here: bool = False):
         self.ctx, self.here = ctx, here
         self.first_time = False
+        self.lift_observe = False  # observe on this machine is all that holds the batch: take() sets it to supervised
+        self.lifted: Optional[str] = None
         self._ready: Any = ()
 
     def ready(self) -> Optional[str]:
@@ -450,6 +509,8 @@ class HandOver:
                     "MACH runs the batch here instead.")
         if raw.get("source") == "local-file":
             reason = why_not(raw, pol)
+            if reason and held_only_by_machine_observe(raw, ctx.config):
+                self.lift_observe, reason = True, None  # a person's pull: the work runs, and take() says so
             if reason:
                 return reason
         elif raw.get("source") == "invalid-file":
@@ -473,6 +534,8 @@ class HandOver:
         """The authorization, written the first time a pull hands work over here. Never over a person's disable."""
         raw = policy_module.read(self.ctx.root)
         if raw.get("source") == "local-file":
+            if self.lift_observe:
+                self.lifted = lift_machine_observe(self.ctx, "pull")
             return
         write_authorization(self.ctx, PULL_REQUEST, "pull", "pull")
         self.first_time = True
@@ -570,7 +633,7 @@ def resume(ctx: Context, args: Any) -> Dict[str, Any]:
     policy_module.save(ctx.root, pol)
     if was_paused or cleared:
         change(ctx, "factory.resumed", by="engineer", retrying=cleared)
-    started = carry_on(ctx)
+    started = carry_on(ctx, started_by="resume")
     return {"resumed": True, "retrying": cleared, "still_waiting_for_a_person": sorted(set(status(ctx)["waiting_for_a_person"]) - set(cleared)), **started}
 
 

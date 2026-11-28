@@ -16,7 +16,10 @@ handed to verification.
     build.py done <ticket> <task>      a [contract], [refactor] or [docs] task; commits it
     build.py add-task <ticket> ...     add a task during a revision round
     build.py finish <ticket>           final gate; writes build-report.json
-    build.py revise <ticket>           start a revision after a failed round; the third failed round escalates
+    build.py revise <ticket>           start a revision after a failed round; failing the last round stops it for a person
+    build.py carry-on <ticket> --by NAME [--via terminal|floor] [--guidance "<text>"]
+                                       a person carries a stopped ticket on: one more round on the same branch, with the
+                                       last findings and their guidance; reached through run.py decide do <ticket> carry-on
     build.py set-commands <ticket> --test-cmd "<command>" [--lint-cmd "<command>"] --reason "<why>"
                                        give a build in progress its test (or lint) command, or change it, at any time; recorded
                                        as a deviation; nothing done is undone and the build carries on from where it is
@@ -193,6 +196,21 @@ def telemetry(*args: Any, **kwargs: Any) -> None:
     """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
     if lifecycle is not None:
         lifecycle.record(*args, **kwargs)
+
+
+# How many judging rounds a ticket has (review.max_loops plus the rounds a person granted it): the shared rule, with the intent
+# station, so the build, review and run stations count the same way.
+try:
+    import rounds  # noqa: E402
+except Exception:  # noqa: BLE001
+    rounds = None
+
+
+def rounds_rule() -> Any:
+    """The shared rounds rule; its absence refuses, as the round limit is a gate."""
+    if rounds is None:
+        raise BuildError("The intent station's rounds.py could not be loaded, so the round limit cannot be checked. Install MACH again.", code="rounds-missing")
+    return rounds
 
 
 # Architecture decisions: the shared helper, also with the intent station. Its rules are gates, so a build without it refuses.
@@ -1732,9 +1750,11 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     if cell.info.get("stage") != "built":
         raise BuildError("A revision round starts from a built cell that review or verification sent back.", code="wrong-stage")
-    limit = cell.section("review").get("max_loops", 3)
+    rule = rounds_rule()
+    limit = rule.limit(cell.config, cell.root)
     loop = cell.state.get("loop", 0) + 1
-    if loop >= limit:  # the build just sent back was failed round number `limit`
+    counted = loop - rule.base(cell.root)  # the round just failed, as it counts (rounds_base: rounds a person's start set aside)
+    if loop >= rule.last(cell.config, cell.root):  # the build just sent back failed the last round it has
         cell.info["stage"] = "blocked"
         cell.save_info()
         telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "round-limit", "outcome": "refuse", "reason_code": "round-limit",
@@ -1742,8 +1762,12 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
         telemetry(cell.root, "station.entered", "build", lambda: {"stage": "blocked", "revision": loop})
         telemetry(cell.root, "station.exited", "build", lambda: {"outcome": "escalated", "stage": "blocked"})
         print(json.dumps({
-            "status": "ESCALATE", "loops_used": limit,
-            "action": f"This ticket has now failed {limit} rounds of verification or review, which is the limit. Do not build again. Label the ticket 'blocked-requires-sme', set its state to blocked, and report to a person.",
+            "status": "ESCALATE", "loops_used": counted,
+            "action": (f"This ticket failed round {counted} of {limit}, so it stops here for a person. A person carries it on with a fix: "
+                       f"run.py decide do {cell.ticket_id} carry-on, with what the builder should do differently, or the same from the Factory Floor. "
+                       "The builder then gets one more round on this branch, with the findings and the person's words, and nothing already "
+                       "built is redone. Do not build again until then. Label the ticket 'blocked-requires-sme', set its state to blocked, "
+                       "and give the person the findings."),
         }, indent=2))
         return 1
     findings = None
@@ -1774,13 +1798,44 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
     cell.info["stage"] = "building"
     cell.save()
     cell.save_info()
+    carried = rule.current(cell.root, loop)
+    guidance = cell.root / carried["guidance"] if carried and isinstance(carried.get("guidance"), str) else None
+    guided = bool(guidance and guidance.is_file())
     telemetry(cell.root, "station.entered", "build", lambda: {"stage": "building", "revision": loop, "findings_copied": findings is not None,
-                                                             "synced_with_main": bool(synced)})
-    print(json.dumps({
-        "status": "REVISING", "loop": loop, "round": loop + 1, "rounds_left": limit - loop - 1, "findings": str(findings) if findings else None,
-        "synced_with_main": merge_note(synced), "suite": cell.state.get("suite"), "tests_after_merge": after_merge,
-        "next": "Add one task per finding with 'add-task' (a [test] task first for any behavior that was wrong), then work them with red, green and done.",
-    }, indent=2))
+                                                             "synced_with_main": bool(synced),
+                                                             **({"carried_on_by_person": True, "guidance": guided} if carried else {})})
+    steps = "Add one task per finding with 'add-task' (a [test] task first for any behavior that was wrong), then work them with red, green and done."
+    if carried:
+        who = rule.who(carried)
+        steps = ((f"{who}, and wrote what to do in " + str(guidance) + ". Read it first, as that person's words about this ticket. "
+                  + rule.GUIDANCE_FENCE + " " if guided else f"{who}; the findings alone say what to fix. ")
+                 + "Make the smallest change that answers the findings" + (" and the person's guidance" if guided else "")
+                 + ". Keep everything already proven: do not redo, rewrite or rebuild work the findings do not name. " + steps)
+    counted = rule.used(cell.root, loop)
+    shown: Dict[str, Any] = {"status": "REVISING", "loop": loop, "round": counted, "rounds_left": max(limit - counted, 0),
+                             "findings": str(findings) if findings else None}
+    if rule.base(cell.root) or rule.extra(cell.root):  # a person carried it on or started the line afresh: the round's own number and the limit
+        shown.update({"round_number": loop + 1, "max_rounds": limit})
+    if carried:
+        shown.update({"guidance": str(guidance) if guided else None, "carried_on_by": carried.get("by")})
+    shown.update({"synced_with_main": merge_note(synced), "suite": cell.state.get("suite"), "tests_after_merge": after_merge, "next": steps})
+    print(json.dumps(shown, indent=2))
+    return 0
+
+
+def cmd_carry_on(cell: Cell, args: argparse.Namespace) -> int:
+    """A person carries a stopped ticket on (rounds.carry_on, the shared writer): one more round on the same branch, with the last
+    findings and their guidance kept as their words; the ticket goes back to 'built' and the line's next step is the revision."""
+    rule = rounds_rule()
+    try:
+        done = rule.carry_on(cell.root, cell.config, by=args.by, via=args.via, guidance=args.guidance)
+    except rule.RoundsError as exc:
+        raise BuildError(str(exc), code=exc.code)
+    findings = done.get("findings")
+    print(json.dumps({**done, "next": (f"The builder revises it in round {done['round']} of {done['max_rounds']}: build.py revise {cell.ticket_id}"
+                                       + (f" --findings {findings}" if findings else "")
+                                       + ". Take the label 'blocked-requires-sme' off the ticket and set its state to in_progress, with the ticket skill.")},
+                     indent=2, ensure_ascii=False))
     return 0
 
 
@@ -3362,6 +3417,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("ticket_id")
     p.add_argument("--findings", help="file holding the reviewers' findings; copied into the cell")
     p.set_defaults(func=cmd_revise)
+
+    p = sub.add_parser("carry-on", help="a person carries a stopped ticket on: one more round on the same branch, with the findings and their guidance")
+    p.add_argument("ticket_id")
+    p.add_argument("--by", required=True, help="the person who carries it on")
+    p.add_argument("--via", choices=sorted(SET_BY_VIA), default="terminal", help="where the person decided: in conversation (default) or in the Factory Floor")
+    p.add_argument("--guidance", help="what the builder should do differently, in the person's words (optional; kept in the cell as their words)")
+    p.set_defaults(func=cmd_carry_on)
 
     for name, func, text in (("next", cmd_next, "show the next task and the spec text it must satisfy"), ("finish", cmd_finish, "final gate; writes build-report.json"),
                              ("status", cmd_status, "show progress"), ("lanes", cmd_lanes, "the lane plan and each lane's status; reads only"),

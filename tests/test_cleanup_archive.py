@@ -24,6 +24,8 @@ def run(command):
 
 
 class Base(test_cleanup.Base):
+    keep_archive = False
+
     def configure(self, **cleanup):
         path = self.project / ".factory/config.json"
         config = json.loads(path.read_text()) if path.is_file() else {}
@@ -57,12 +59,12 @@ class SettingTest(Base):
         self.merged_by_the_line()
         plan = self.c_ok("plan", "LOCAL-001")
         self.assertEqual((plan["raised_to_person"], plan["archive_decision"]["kept"], plan["archive_decision"]["setting"], plan["would"]["archive"]),
-                         ({}, False, "raised", None))
+                         ({}, False, "none", None))
         done = self.c_ok("run", "LOCAL-001")
         self.assert_no_archive(done)
         self.assertEqual(done["record"]["raised_to_person"], [])
-        self.assertEqual(done["record"]["archive_kept"], {"kept": False, "setting": "raised", "chosen_by": "setting", "published": None,
-                                                          "reason": "The evidence files were not kept after cleanup: cleanup.archive is \"raised\" and no person decided anything on this ticket."})
+        self.assertEqual(done["record"]["archive_kept"], {"kept": False, "setting": "none", "chosen_by": "setting", "published": None,
+                                                          "reason": "The evidence files were not kept after cleanup: the project keeps no archives (cleanup.archive is \"none\")."})
         self.assertEqual(set(done["record"]), RECORD_KEYS)
         self.assertTrue(done["branch_deleted"], "a merged branch is deleted as before: its work is on main")
         self.assertFalse(self.cellroot.exists())
@@ -87,22 +89,22 @@ class SettingTest(Base):
         for value in ("sometimes", 3, None, ["all"]):
             self.configure(archive=value)
             plan = self.c_ok("plan", "LOCAL-001")
-            self.assertEqual((plan["archive_decision"]["setting"], plan["archive_decision"]["kept"]), ("raised", False), value)
+            self.assertEqual((plan["archive_decision"]["setting"], plan["archive_decision"]["kept"]), ("none", False), value)
             self.assertEqual("setting_note" in plan["archive_decision"], value is not None)
         self.configure(archive="ALL")
         self.assertIn("reads as the default", self.c_ok("run", "LOCAL-001")["setting_note"])
 
-    def test_each_value_on_an_abandoned_ticket(self):
-        for value, kept in (("all", True), ("raised", True), ("none", False)):
-            with self.subTest(value=value):
+    def test_an_abandoned_ticket_s_work_is_deleted_whatever_the_setting_unless_a_person_keeps_it(self):
+        for value, flag, kept in (("all", None, False), ("raised", None, False), ("none", None, False), ("none", "--keep-archive", True)):
+            with self.subTest(value=value, flag=flag):
                 self.setUp()
                 self.worked()
                 self.configure(archive=value)
-                done = self.c_ok("run", "LOCAL-001", "--abandon", WHY)
+                done = self.c_ok("run", "LOCAL-001", "--abandon", WHY, *([flag] if flag else []))
                 self.assertEqual(done["record"]["archive_kept"]["kept"], kept)
                 self.assertEqual(done["record"]["raised_to_person"], ["abandoned-by-person"])
                 self.assertEqual(bool(self.tarballs()), kept)
-                self.assertEqual(BRANCH in self.branches(), not kept, "with no archive the branch stays in Git")
+                self.assertNotIn(BRANCH, self.branches(), "the branch is deleted either way: with --keep-archive its commits are in the archive")
                 self.tearDown()
 
     def test_the_flag_says_otherwise_for_one_cleanup(self):
@@ -137,6 +139,7 @@ class RaisedTest(Base):
         self.setUp()
         try:
             self.merged_by_the_line()
+            self.configure(archive="raised")
             setup()
             done = self.c_ok("run", "LOCAL-001")
             self.assertIn(code, done["record"]["raised_to_person"], code)
@@ -187,6 +190,7 @@ class RaisedTest(Base):
                                  "review/round-1/decision.json": json.dumps({"round": 1, "outcome": "APPROVED", "human_approval": None, "human_approval_required": False}),
                                  "plan-history/1/replan.json": json.dumps({"replan": 1, "reason": "The spec was corrected."})})
         self.put(self.project, {".factory/intake/events.jsonl": json.dumps({"type": "human.required", "ticket_id": "LOCAL-0011"}) + "\n"})
+        self.configure(archive="raised")
         done = self.c_ok("run", "LOCAL-001")
         self.assertEqual(done["record"]["raised_to_person"], [])
         self.assert_no_archive(done)
@@ -208,35 +212,6 @@ class KeptInGitTest(Base):
         brought = run(entry["bring_back"])
         self.assertEqual(brought.returncode, 0, brought.stderr)
         return shown.stdout
-
-    def test_an_abandoned_ticket_s_branch_and_uncommitted_files_stay_in_git(self):
-        self.worked()
-        self.configure(archive="none")
-        tip = git(self.project, "rev-parse", BRANCH).stdout.strip()
-        self.put(self.work, {"app/invite.py": "def invite(email):\n    return 'half done'\n", "scratch/idea.txt": "untracked idea\n"})
-        plan = self.c_ok("plan", "LOCAL-001", "--abandon", WHY)
-        self.assertEqual((plan["would"]["delete_branch"], plan["would"]["bundle_branch"], plan["keep_branch"]), (None, False, True))
-        self.assertTrue(any("uncommitted files" in line for line in plan["keep_in_git"]))
-        done = self.c_ok("run", "LOCAL-001", "--abandon", WHY)
-        self.assert_no_archive(done)
-        self.assertFalse(done["branch_deleted"])
-        self.assertEqual(git(self.project, "rev-parse", BRANCH).stdout.strip(), tip, "the branch is kept as it was")
-        branch = next(item for item in done["kept_in_git"] if item["kind"] == "branch")
-        self.assertEqual((branch["name"], branch["delete"]), (BRANCH, f'git -C "{self.project}" branch -D {BRANCH}'))
-        self.assertIn("work in the cell", self.check(branch))
-        folder = self.project.parent / f"{self.project.name}-LOCAL-001"
-        self.assertIn("return 'sent'", (folder / "app/invite.py").read_text(), "brought back as a worktree on the branch")
-        self.assertIn(branch["bring_back"], done["restore"])
-        files = next(item for item in done["kept_in_git"] if item["name"].startswith("refs/mach/cell-files/LOCAL-001/"))
-        self.check(files)
-        restored = files["name"].replace("refs/mach/", "recovered/")
-        self.assertIn("half done", git(self.project, "show", f"{restored}:app/invite.py").stdout)
-        self.assertEqual(git(self.project, "show", f"{restored}:scratch/idea.txt").stdout, "untracked idea\n")
-        self.assertIn("checkout", files["files_back"])
-        self.assertEqual(done["record"]["kept_in_git"], {"branch": {"name": BRANCH, "commit": tip},
-                                                         "refs": [{"ref": files["name"], "commit": files["commit"]}]})
-        self.assertIn("cleanup.py forget LOCAL-001", done["forget"])
-        self.assertFalse(self.cellroot.exists())
 
     def test_a_replanned_build_s_refs_and_set_aside_lanes_stay_in_git(self):
         self.worked()
@@ -266,23 +241,67 @@ class KeptInGitTest(Base):
         self.assertIn("files_back", listed["refs/mach/lane-files/LOCAL-001/L1/1"])
         self.assertEqual(sorted(item["ref"] for item in done["record"]["kept_in_git"]["refs"]), sorted(refs))
 
-    def test_an_abandoned_ticket_with_nothing_unmerged_needs_no_branch(self):
+
+
+class DeletedForGoodTest(Base):
+    """An abandoned ticket's work is deleted from this machine: cell, worktree, local branch and every ref MACH kept for it. Nothing
+    is archived and nothing is kept in Git, unless a person asks with --keep-archive. Remote branches are never touched."""
+
+    def abandon_with_everything(self):
         self.worked()
-        self.merge()
-        self.configure(archive="none")
+        self.put(self.work, {"app/invite.py": "def invite(email):\n    return 'half done'\n", "scratch/idea.txt": "untracked idea\n"})
+        for ref in ("refs/mach/replan/LOCAL-001/1", "refs/mach/lane-files/LOCAL-001/L1/1", "refs/mach/cell-files/LOCAL-001/taken-over-1",
+                    "refs/mach/replan/LOCAL-0011/1"):
+            git(self.project, "update-ref", ref, BRANCH)
+        git(self.project, "update-ref", f"refs/remotes/origin/{BRANCH}", BRANCH)
+
+    def test_the_plan_says_plainly_what_is_deleted_for_good(self):
+        self.abandon_with_everything()
+        plan = self.c_ok("plan", "LOCAL-001", "--abandon", WHY)
+        self.assertTrue(plan["deletes_for_good"])
+        self.assertEqual(plan["deletes"], {"unmerged_commits": 2, "uncommitted_files": 2, "lane_commits": 0, "refs": 3, "branch": BRANCH})
+        self.assertEqual(plan["in_words"], f"Abandoning LOCAL-001 deletes its work from this machine for good: 2 unmerged commits and 2 uncommitted files go, "
+                                           f"with its cell, its worktrees, its local branch {BRANCH} and the 3 refs MACH kept for it. Nothing is archived or kept. "
+                                           "Remote branches and GitHub are not touched. To keep an archive instead, a person asks for it with --keep-archive.")
+        self.assertEqual((plan["would"]["archive"], plan["would"]["delete_branch"], plan["keep_in_git"]), (None, f"git branch -D {BRANCH}", []))
+        self.assertIn("deleted for good", plan["next"])
+
+    def test_abandon_deletes_the_cell_the_branch_and_every_ref_and_keeps_nothing(self):
+        self.abandon_with_everything()
         done = self.c_ok("run", "LOCAL-001", "--abandon", WHY)
-        self.assertTrue(done["branch_deleted"], "every commit of the branch is on main: nothing is lost")
-        self.assertEqual(done["kept_in_git"], [])
+        self.assert_no_archive(done)
+        self.assertTrue(done["branch_deleted"])
+        self.assertNotIn(BRANCH, self.branches())
+        self.assertEqual(self.refs(), ["refs/mach/replan/LOCAL-0011/1"], "every ref of this ticket goes; another ticket's stays")
+        self.assertEqual(git(self.project, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{BRANCH}").returncode, 0, "a remote branch is never touched")
+        self.assertFalse(self.cellroot.exists())
+        self.assertEqual((done["kept_in_git"], done["restore"]), ([], None))
         self.assertNotIn("kept_in_git", done["record"])
+        self.assertIn("deleted its work from this machine for good", done["in_words"])
+        self.assertEqual(done["record"]["archive_kept"]["chosen_by"], "abandon")
+
+    def test_keep_archive_keeps_it_as_before(self):
+        self.abandon_with_everything()
+        done = self.c_ok("run", "LOCAL-001", "--abandon", WHY, "--keep-archive")
+        self.assertEqual(self.tarballs(), ["LOCAL-001.tar.gz"])
+        self.assertIn("LOCAL-001/branch.bundle", self.members())
+        self.assertIn("git fetch", done["restore"])
 
 
 class ForgetTest(Base):
     def abandoned_without_archive(self):
-        self.worked()
+        """What an older cleanup kept in Git for a finished ticket: MACH's refs for it and the ticket's branch, named in its run record."""
+        self.merged_by_the_line()
         self.configure(archive="none")
+        tip = git(self.project, "rev-parse", BRANCH).stdout.strip()
         git(self.project, "update-ref", "refs/mach/replan/LOCAL-001/1", BRANCH)
         git(self.project, "update-ref", "refs/mach/replan/LOCAL-0011/1", BRANCH)
-        return self.c_ok("run", "LOCAL-001", "--abandon", WHY)
+        done = self.c_ok("run", "LOCAL-001")
+        git(self.project, "branch", BRANCH, tip)
+        lines = self.records()
+        lines[-1]["kept_in_git"] = {"branch": {"name": BRANCH, "commit": tip}, "refs": []}
+        (self.archive / "runs.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
+        return done
 
     def test_forget_lists_without_the_flag_and_deletes_with_it(self):
         self.abandoned_without_archive()

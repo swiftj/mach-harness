@@ -43,7 +43,8 @@ only while the branch is that commit (the merge station voids it as it voids any
     Tuning       a ticket labelled factory-tuning: 3 reviewers on the strongest tier, 3 approvals, and no person,
                  provided it changes only the factory's rule files (and its own spec and tests)
 
-The third failed round for a ticket, counting failed verifications, is escalated to a person.
+The last failed round for a ticket (review.max_loops, counting failed verifications, plus any round a person granted it) stops
+it for a person, who can carry it on with a fix (build.py carry-on, through run.py decide do <ticket> carry-on).
 
 Architecture decisions (adr.py, the intent station's shared helper): the packet lists the ADRs the change is held to,
 the ones its plan was made under, with the copies the cell keeps, any exception a person recorded, and the ticket's own
@@ -156,6 +157,10 @@ try:
     import lifecycle  # noqa: E402
 except Exception:  # noqa: BLE001
     lifecycle = None
+try:
+    import rounds  # noqa: E402  (how many rounds a ticket has: shared with the build and run stations)
+except Exception:  # noqa: BLE001
+    rounds = None
 
 # A person may take any ticket over (claim.py, with the intent station): a worker whose holder a take-over displaced is refused at its
 # next call to this station. Every command takes --holder for that; without one, nothing is checked. If the helper cannot be
@@ -330,8 +335,25 @@ class Cell:
             raise ReviewError(f"Review has not started for this build of {self.ticket_id}. Run: review.py start {self.ticket_id}", code="not-started")
 
     def max_loops(self) -> int:
+        """The ticket's last round: review.max_loops plus the rounds a person granted it (rounds.limit, shared with the build station)."""
+        if rounds is not None:
+            return rounds.limit(self.config, self.root)
         value = self.section("review").get("max_loops", MAX_LOOPS)
-        return value if isinstance(value, int) and value > 0 else MAX_LOOPS
+        base = value if isinstance(value, int) and value > 0 else MAX_LOOPS
+        extra = self.info.get("extra_rounds")
+        return base + (extra if isinstance(extra, int) and not isinstance(extra, bool) and extra > 0 else 0)
+
+    def rounds_base(self) -> int:
+        """Rounds a person's start set aside (cell.json rounds_base): a round counts as its number less this."""
+        if rounds is not None:
+            return rounds.base(self.root)
+        value = self.info.get("rounds_base")
+        return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+    def counted(self, number: Any) -> Any:
+        """A round's number as it counts against the ticket's limit, read live (rounds.json): a person's start or carry-on made while
+        the review was under way counts at the tally and the send-back, not the packet's copy from the start."""
+        return number - self.rounds_base() if isinstance(number, int) else number
 
     def votes(self) -> Dict[str, Dict[str, Any]]:
         found = {}
@@ -500,7 +522,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     verify_findings = sorted((cell.root / "evidence").glob("previous-*/findings.md"))
     review_rules = next((p for p in (cell.work / "REVIEW.md", cell.project / "REVIEW.md") if p.is_file()), None)
     cell.packet = {
-        "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "round": cell.loop + 1, "max_rounds": cell.max_loops(),
+        "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "round": cell.loop + 1, "max_rounds": cell.max_loops(), "rounds_base": cell.rounds_base(),
         "risk": risk, "approvals_needed": rules["approvals"], "human_approval_required": human, "human_approval_reasons": reasons,
         "head": head, "baseline": baseline, "branch": cell.info.get("branch"), "started_at": now(),
         "repeat_of": str(round_folders(cell.root, cell.loop + 1)[-2]) if cell.folder.name != f"round-{cell.loop + 1}" else None,
@@ -1203,7 +1225,7 @@ def recount(decision: Dict[str, Any], by_seat: Dict[str, Dict[str, List[str]]], 
 
 
 def findings_markdown(cell: Cell, votes: Dict[str, Dict[str, Any]], outcome: str) -> str:
-    lines = [f"# Review findings for {cell.ticket_id}, round {cell.packet['round']} of {cell.packet['max_rounds']}", "",
+    lines = [f"# Review findings for {cell.ticket_id}, round {cell.counted(cell.packet['round'])} of {cell.max_loops()}", "",
              f"Outcome: {outcome}. " + ", ".join(f"{role}: {vote['vote']}" for role, vote in votes.items()) + ".", ""]
     sections = (("blocker", "Blockers: each must be fixed", lambda f: f["severity"] == "blocker"),
                 ("note", "Notes: do not block", lambda f: f["severity"] == "note" and not is_nit(f)),
@@ -1255,7 +1277,7 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     if approvals >= needed and not vetoed:
         outcome = "AWAITING_HUMAN" if cell.packet["human_approval_required"] else "APPROVED"
     else:
-        outcome = "ESCALATE" if cell.packet["round"] >= cell.packet["max_rounds"] else "REJECTED"
+        outcome = "ESCALATE" if cell.counted(cell.packet["round"]) >= cell.max_loops() else "REJECTED"
     findings_path = cell.folder / "findings.md"
     findings_path.write_text(findings_markdown(cell, votes, outcome), encoding="utf-8")
     decision = {
@@ -1295,7 +1317,10 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
         "AWAITING_HUMAN": "The panel approved, but a person must approve before merge because " + (" and ".join(cell.packet.get("human_approval_reasons") or []) or "the project requires it")
         + ". Show them the findings and wait; record their decision with approve-human.",
         "REJECTED": f"Post the findings on the ticket, then return it to the build station: build revise {cell.ticket_id} --findings {findings_path}",
-        "ESCALATE": f"This was failed round {cell.packet['round']} of {cell.packet['max_rounds']}. Do not send it back to the build station. Label the ticket 'blocked-requires-sme', set its state to blocked, and give a person the findings.",
+        "ESCALATE": (f"The review panel rejected round {cell.counted(cell.packet['round'])} of {cell.max_loops()}, the last, so the ticket stops here for a person. "
+                     f"A person carries it on with a fix: run.py decide do {cell.ticket_id} carry-on, with what the builder should do differently, or the "
+                     "same from the Factory Floor; the builder then gets one more round on this branch. Do not send it to the build station until then. "
+                     "Label the ticket 'blocked-requires-sme', set its state to blocked, and give the person the findings."),
     }[outcome]
     print(json.dumps({**{k: decision[k] for k in ("outcome", "round", "risk", "approvals", "approvals_needed", "votes", "blockers")},
                       "overruled_blockers_from": overruled, "findings": str(findings_path), "next": next_step}, indent=2))
@@ -1353,7 +1378,7 @@ def exception_state(cell: Cell) -> Dict[str, Any]:
                           code="not-decided")
     if cell.packet.get("tuning"):
         raise ReviewError("This is a factory-tuning ticket: its panel decides unanimously and no person signs it off, so a security blocker on it is never "
-                          "excepted. It is fixed, or the ticket is abandoned.", code="tuning")
+                          "excepted. The builder fixes it in a new round.", code="tuning")
     top = load_json(cell.root / "review" / "decision.json", {}) or {}
     sender = decision.get("rejected_by") or top.get("rejected_by")
     if sender or top.get("outcome") != decision.get("outcome") or top.get("head") != decision.get("head"):
@@ -1376,7 +1401,7 @@ def exception_state(cell: Cell) -> Dict[str, Any]:
         build = load_json(cell.root / "build.json", {}) or {}
         loop = build.get("loop") if type(build.get("loop")) is int else 0
         number = decision.get("round") if type(decision.get("round")) is int else cell.packet.get("round")
-        if loop >= (number or 1) or stage != {"REJECTED": "built", "ESCALATE": "blocked"}[outcome]:
+        if loop >= (number or 1) or stage not in {"REJECTED": ("built",), "ESCALATE": ("blocked", "built")}[outcome]:
             raise ReviewError(f"A revision has started since round {label} was rejected (the cell is '{stage}'): the builder is answering the findings. "
                               "An exception is recorded before a revision starts, never after.", code="revision-started")
         if head != decision.get("head"):
@@ -1625,7 +1650,8 @@ def cmd_approve_human(cell: Cell, args: argparse.Namespace) -> int:
     lapsed = expired_exceptions(decision)
     if lapsed:
         raise ReviewError(f"The security exception for {', '.join(exception_ref(item) for item in lapsed)} expired on {lapsed[0].get('expires')}, so the "
-                          "security veto stands again. A person records a new exception (except) or the ticket is abandoned; it is not approved over it.",
+                          "security veto stands again. A person records a new exception (except), or carries it on so the builder fixes the finding (run.py decide do "
+                          f"{cell.ticket_id} carry-on); it is not approved over it.",
                           code="exception-expired")
     name = " ".join(args.by.split())
     if len(name) < 2:
@@ -1661,25 +1687,42 @@ def cmd_send_back(cell: Cell, args: argparse.Namespace) -> int:
     if len(reason) < 10:
         raise ReviewError("--reason must say, in the person's own words, what has to change before they will approve.", code="reason-missing")
     number = decision.get("round") if type(decision.get("round")) is int else cell.packet["round"]
-    last = number >= cell.packet["max_rounds"]
-    outcome = "ESCALATE" if last else "REJECTED"
+    last = cell.counted(number) >= cell.max_loops()
+    shown, of = cell.counted(number), cell.max_loops()
     panel_findings = decision.get("findings")
     path = cell.folder / "person-findings.md"
-    path.write_text(f"# Sent back by a person: {cell.ticket_id}, round {number} of {cell.packet['max_rounds']}\n\n"
+    path.write_text(f"# Sent back by a person: {cell.ticket_id}, round {shown} of {of}\n\n"
                     f"The review panel approved this round, and {name} sent it back before approving it.\n\n"
                     f"1. **Sent back by a person.** {reason}\n\n"
                     f"The panel's own findings for this round, none of them blocking, are in {panel_findings}.\n", encoding="utf-8")
-    decision.update({"outcome": outcome, "findings": str(path), "panel_findings": panel_findings, "rejected_by": "a person", "human_approval": None,
-                     "human_send_back": {"by": name, "reason": reason, "recorded_at": now(), "recorded_by": RECORDED_VIA[getattr(args, "via", None) or "terminal"]}})
+    via = getattr(args, "via", None) or "terminal"
+    granted = None
+    if last:
+        # A person's send-back never stops the ticket: in the last round their reason is the guidance, and the builder gets one more
+        # round in the same step, recorded as their carry-on (rounds.grant).
+        if rounds is None:
+            raise ReviewError("The intent station's rounds.py could not be loaded, so the last round's send-back cannot grant the next one. "
+                              "Install MACH again.", code="rounds-missing")
+        try:
+            granted = rounds.grant(cell.root, cell.config, by=name, via=via, guidance=reason, station="person", findings=path, failed_round=number)
+        except rounds.RoundsError as exc:
+            raise ReviewError(str(exc), code=exc.code)
+    decision.update({"outcome": "REJECTED", "findings": str(path), "panel_findings": panel_findings, "rejected_by": "a person", "human_approval": None,
+                     "human_send_back": {"by": name, "reason": reason, "recorded_at": now(), "recorded_by": RECORDED_VIA[via]}})
+    if granted:
+        decision["carried_on"] = {"round": granted["round"], "max_rounds": granted["max_rounds"]}
     write_json(cell.folder / "decision.json", decision)
     write_json(cell.root / "review" / "decision.json", decision)
-    cell.info.update({"stage": "blocked" if last else "built", "review": outcome})
+    cell.info.update({"stage": "built", "review": "REJECTED"})
     cell.save_info()
     telemetry(cell.root, "human.approval_recorded", "human-approval", lambda: {"round": number, "decision": "SENT_BACK", "note_given": True})
-    telemetry(cell.root, "station.exited", "human-approval", lambda: {"outcome": "escalated" if last else "sent-back", "stage": cell.info["stage"]})
-    print(json.dumps({"outcome": outcome, "round": number, "sent_back_by": name, "findings": str(path),
-                      "next": (f"This was round {number} of {cell.packet['max_rounds']}, the last. Do not send it to the build station. Label the ticket 'blocked-requires-sme', set its state to blocked, and tell the person."
-                               if last else f"Return it to the build station: build revise {cell.ticket_id} --findings {path}")}, indent=2))
+    telemetry(cell.root, "station.exited", "human-approval", lambda: {"outcome": "sent-back", "stage": "built"})
+    print(json.dumps({"outcome": "REJECTED", "round": number, "sent_back_by": name, "findings": str(path),
+                      **({"carried_on": {"round": granted["round"], "max_rounds": granted["max_rounds"], "guidance": granted["guidance"]}} if granted else {}),
+                      "next": (f"This was round {shown} of {of}, the last, so {name}'s send-back also gives the builder one more round, round "
+                               f"{granted['round']} of {granted['max_rounds']}, with their reason as the finding and the guidance. Return it to the build "
+                               f"station: build revise {cell.ticket_id} --findings {path}" if granted else
+                               f"Return it to the build station: build revise {cell.ticket_id} --findings {path}")}, indent=2))
     return 0
 
 

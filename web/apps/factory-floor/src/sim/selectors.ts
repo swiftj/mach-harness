@@ -8,7 +8,7 @@ import type { AnySimEvent, EventKind } from "./events";
 import type { Significance } from "./catalog";
 import { EVENT_CATALOG } from "./catalog";
 import { describe } from "./describe";
-import { describeEntry, significanceOf } from "./describe-v3";
+import { describeEntry, significanceOfEvent } from "./describe-v3";
 import { indexFixture, lowerBound, upperBound } from "./engine";
 import type { LogEntry, SceneLog } from "./log";
 import { isSceneLog } from "./log";
@@ -691,7 +691,7 @@ function momentOfEntry(entry: LogEntry): Moment {
     seq: sim ? (event as AnySimEvent).seq : (event as { pos: number }).pos,
     t: entry.t,
     kind: event.type as EventKind,
-    significance: sim ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOf(event.type),
+    significance: sim ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOfEvent(event),
     ticketId: sim ? (event as AnySimEvent).ticket_id : ((event as { ids: { ticket_id: string | null } }).ids.ticket_id ?? null),
     text: describeEntry(entry),
     refs: entry.refs,
@@ -707,7 +707,7 @@ const momentFolds: Readonly<Record<Significance, (log: SceneLog) => LogFold<Mome
 };
 function significanceOfEntry(entry: LogEntry): Significance {
   const event = entry.event;
-  return !isV3(event) ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOf(event.type);
+  return !isV3(event) ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOfEvent(event);
 }
 
 /** The first `n` items of a fold's list, one array per (list, n) while it is in use, so a selector can compare by identity. */
@@ -1016,7 +1016,8 @@ function cellActivity(scene: Scene, cell: CellState): Activity {
   if (stop?.kind === "main-conflict") return { state: "waiting-person", reason: "Bringing its branch up to date with the main branch conflicts; a person resolves it.", since: stop.since, authority, label: "Waits for a person: conflict with main" };
   if (stop?.kind === "merge-recheck" && !cell.station) return { state: "unknown", reason: "The merge-time check sent it back to be verified and reviewed again; no judging round is used.", since: stop.since, authority, label: "Held: back to verify" };
   if (cell.stage === "awaiting-human" || cell.stage === "spec-open") return { state: "waiting-person", reason: cell.stage === "spec-open" ? "The spec has open questions." : "A person must approve.", since: cell.stageHistory.at(-1)?.at ?? null, authority };
-  if (cell.stage === "blocked") return { state: "waiting-person", reason: "Escalated to a person.", since: cell.stageHistory.at(-1)?.at ?? null, authority };
+  // Stopped for a person: no execution runs, and none will until a person decides. Said as such, never "idle".
+  if (cell.stage === "blocked") return { state: "waiting-person", reason: STOPPED_FOR_PERSON, since: cell.stageHistory.at(-1)?.at ?? null, authority, label: "Waits for a person's decision" };
   // The human gate's id is the ticket's (one per ticket): looked up, never a scan of every gate per cell.
   const human = scene.gates[gateId(cell.ticketId, "human-approval")];
   const waitingGate = human?.state === "waiting" ? human : undefined;
@@ -1045,9 +1046,23 @@ function cellActivity(scene: Scene, cell: CellState): Activity {
   const slice = scene.slices[cell.sliceId];
   if (slice?.scheduler === "waiting-on-dependency") return { state: "waiting-dependency", reason: slice.reasons.join(" ") || "Waiting for what it depends on.", since: slice.since, authority: slice.meta.authority };
   if (cell.stage === "approved" || cell.stage === "pr-open") return awaitingMerge(scene, cell, authority);
+  // A person carried it on, or started work on it again, and no visit has started since: it waits for the line.
+  const lastEntry = cell.visits.at(-1)?.enteredAt ?? Number.NEGATIVE_INFINITY;
+  const carried = (cell.carriedOn ?? []).filter((c) => c.at >= lastEntry).at(-1);
+  if (carried) {
+    const how = carried.outcome === "rounds-reset" || carried.by === "person-start" ? "A person started work on it again, which gave it a fresh set of rounds" : "A person carried it on with a fix, which gave it one more round";
+    return { state: "waiting-resources", reason: `${how}. It waits for the line to take it up: a Factory running here does; if none is running, /mach pull in Claude Code carries it on.`, since: carried.at, authority, label: "Carried on; waits for the line" };
+  }
   if (execution && authority !== "simulated") return betweenExecutions(cell, execution);
   return { state: "unknown", reason: "Between stations; nothing recorded says what it waits for.", since: null, authority };
 }
+
+/**
+ * What a ticket stopped for a person waits for, and what follows: true whether or not a Factory runs
+ * here (the supervisor takes no step on it until a person decides).
+ */
+export const STOPPED_FOR_PERSON =
+  "Stopped: it waits for a person, and no execution runs until then. A person carries it on with a fix, or starts the Factory with /mach pull, which gives a ticket stopped for its rounds a fresh set of rounds; the Factory then takes it up again at the build step.";
 
 /**
  * When an execution ended: when its process ended (measured, from the process record), else when the

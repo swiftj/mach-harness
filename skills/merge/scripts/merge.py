@@ -714,7 +714,8 @@ def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
     if lapsed and stage in ("approved", "pr-open") and cell.decision.get("outcome") == "APPROVED":
         plan["exception_expired"] = [f"{item.get('round')}/{item.get('seat')}/{item.get('index')}" for item in lapsed]
         refusals.append(f"The security exception for {', '.join(plan['exception_expired'])} expired on {lapsed[0].get('expires')}, so the security veto stands "
-                        "again and nothing is merged. A person decides: record a new exception (except) or abandon the ticket.")
+                        "again and nothing is merged. A person decides: record a new exception (except), or carry it on so the builder fixes "
+                        f"the finding (run.py decide do {cell.ticket_id} carry-on).")
     revalidated = cell.info.get("revalidated") or {}
     # The station's own record commit (M13) keeps the approval: it adds exactly the record file on top of the approved
     # or revalidated commit, checked in Git. Any other commit on top voids it.

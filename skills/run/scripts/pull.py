@@ -84,6 +84,9 @@ def pull(args: Any, root: Path, *, config: Dict[str, Any], line: Any, schedule: 
             if running:
                 report["factory"].update(running)
     report["first_time"] = bool(report["factory"]["handed_over"] and getattr(hand, "first_time", False))
+    lifted = getattr(hand, "lifted", None) or report["factory"].get("observe_lifted")
+    if isinstance(lifted, str) and lifted:
+        report["factory"]["observe_lifted"] = lifted
     report["factory_started"] = report["factory"]["handed_over"] and report["factory"]["supervisor"] != "none"
     try:
         report["needs_you"] = list(needs_you()) if needs_you is not None else []
@@ -323,6 +326,8 @@ def lead(report: Dict[str, Any]) -> List[str]:
     if needs:
         lines.append(f"Needs you: {len(needs)}. /mach decide walks you through them; the Factory Floor shows them too.")
     factory = report.get("factory") or {}
+    if factory.get("observe_lifted"):
+        lines.append(str(factory["observe_lifted"]))
     if factory.get("handed_over"):
         tickets = joined([str(ticket) for ticket in factory.get("tickets") or []])
         if factory.get("supervisor") == "none":

@@ -768,5 +768,97 @@ class WordsTest(unittest.TestCase):
         self.assertIn("`RUN schedule <a> <b> <c> --named`", run_skill)
 
 
+class StoppedTicketWordsTest(unittest.TestCase):
+    """The owner's rule of 2026-11-27: "The suggestion to abandon work that has already been done or give up is not acceptable."
+    No sentence MACH prints, or tells its agents to say, offers abandoning a stopped ticket, building its slice again from the start,
+    or the person fixing the branch by hand as the way forward. A sentence that forbids it ("Never suggest ...") says the rule.
+    Scanned: every printed string of the stations' scripts (decide.py and act.py included) and every sentence of their SKILL.md."""
+
+    SCRIPTS = ("run", "intent", "build", "merge", "cleanup", "ticket", "review", "verify")
+    SKILLS = ("run", "build", "review", "verify", "cleanup")
+    WAYS = re.compile(r"\bor abandon\b|\bor (?:it is |the ticket is )?abandon(?:s|ed)?\b|\babandon(?:s|ing)? (?:the ticket|it) (?:and|or)\b|\bthe ticket is abandoned\b|"
+                      r"\bfrom scratch\b|\brebuild(?:s|ing)? the slice\b|\b(?:start|build)(?:s|ing)? (?:it |the slice |the ticket )?(?:over|again from the start)\b|"
+                      r"\bfix(?:es|ing)? (?:it|the branch|the code) by hand\b|\bonly be abandoned\b|\bthe line will not run it again\b|"
+                      r"\bescalated, not built again\b|\bwill not be built again\b|\bcannot be raised\b", re.I)
+    # A slice that changed while its work was in the line is not a stopped ticket: the engineer chooses between the two revisions.
+    # A lane join that put nothing on the branch starts again from its own fork point: nothing done is undone.
+    ALLOWED = ("an engineer decides whether to finish the work in progress or abandon it and start again",
+               "finish the work in progress (the new revision is taken once it ships), or abandon it with the cleanup station",
+               "the engineer either lets it finish", "the join starts over from the fork point")
+
+    def ok(self, text):
+        low = " ".join(text.lower().split())
+        return re.search(r"\bnever\b", low) is not None or any(phrase in low for phrase in self.ALLOWED) or not self.WAYS.search(low)
+
+    def test_no_printed_sentence_offers_giving_a_stopped_ticket_up(self):
+        found = []
+        words = WordsTest()
+        for folder in self.SCRIPTS:
+            for path in sorted((ROOT / "skills" / folder / "scripts").glob("*.py")):
+                for line, text in words.strings(path):
+                    if not self.ok(text):
+                        found.append(f"{path.relative_to(ROOT)}:{line}: {text[:160]}")
+        self.assertEqual(found, [])
+
+    def test_no_skill_sentence_offers_giving_a_stopped_ticket_up(self):
+        found = []
+        for name in self.SKILLS:
+            path = ROOT / "skills" / name / "SKILL.md"
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                for sentence in re.split(r"(?<=[.!?])\s+", line):
+                    if not self.ok(sentence):
+                        found.append(f"{path.relative_to(ROOT)}:{number}: {sentence.strip()[:160]}")
+        self.assertEqual(found, [])
+
+    def test_the_run_skill_states_the_rule(self):
+        text = (ROOT / "skills" / "run" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("A stopped ticket is carried on, never given up.", text)
+        self.assertIn("`carry-on <ticket> [\"<guidance>\"]`", text)
+
+
+class EveryDecisionStateTest(unittest.TestCase):
+    """Every state decide.py knows offers at least one way forward that is not abandoning, and abandoning is never first,
+    never the only option and never recommended. A state that has a real way forward offers it, not only "wait"."""
+
+    STAGE = {"approval": "awaiting-human", "merge": "approved", "pull-request": "pr-open", "merge-stopped": "approved", "landed-elsewhere": "built",
+             "already-on-main": "merged", "answers": "spec-open", "policy-owner": "spec-open", "product-answer": "spec-ready", "build-gate": "building",
+             "escalated": "blocked", "stuck": "sideways", "bronze": "planned", "parked": "building", "worker-in-cell": "building",
+             "adr-conflict": "spec-ready", "adr-acceptance": "planned", "adr-fix": "spec-ready", "adr-baseline": "spec-ready", "security-veto": "built",
+             "exception-expired": "approved", "main-conflict": "built"}
+    # Where the one way forward is someone else's answer arriving, waiting for it is the way forward.
+    WAITING_IS_THE_WAY = ("product-answer", "worker-in-cell")
+
+    def test_every_state_has_a_way_forward_that_is_not_abandon(self):
+        import tempfile
+        from datetime import datetime, timezone
+        import decide
+        self.assertEqual(set(self.STAGE), set(decide.SUMMARY), "a new state is added to this test")
+        for built in (False, True):
+            for state, stage in self.STAGE.items():
+                with self.subTest(state=state, built=built):
+                    tmp = tempfile.TemporaryDirectory()
+                    self.addCleanup(tmp.cleanup)
+                    root = Path(tmp.name)
+                    cell = root / ".factory" / "worktrees" / "T-1"
+                    cell.mkdir(parents=True)
+                    (cell / "cell.json").write_text(json.dumps({"ticket_id": "T-1", "stage": stage}))
+                    if built:
+                        (cell / "build.json").write_text(json.dumps({"loop": 2, "tasks": [{"id": "T01", "status": "done"}]}))
+                    item = decide.record(root, "T-1", state, {"stage": stage}, {"rounds_used": 3, "max_rounds": 3}, {},
+                                         {"T-1": {"reason": "It made no progress.", "at": "2026-11-27T10:00:00Z"}}, "/mach-intent", datetime.now(timezone.utc))
+                    keys = [option["key"] for option in item["options"]]
+                    ahead = [key for key in keys if key != "abandon"]
+                    self.assertTrue(ahead, keys)
+                    self.assertNotEqual(keys[0], "abandon", keys)
+                    self.assertFalse([o for o in item["options"] if o["key"] == "abandon" and o["recommended"]])
+                    if state not in self.WAITING_IS_THE_WAY:
+                        self.assertTrue([key for key in ahead if key != "wait"], (state, keys))
+                    if built and state in ("escalated", "stuck"):
+                        self.assertEqual(keys[0], "carry-on")
+                        self.assertTrue(item["options"][0]["recommended"])
+                    if built and state == "exception-expired":
+                        self.assertIn("carry-on", keys, "an expired exception that cannot be renewed is still carried on")
+
+
 if __name__ == "__main__":
     unittest.main()

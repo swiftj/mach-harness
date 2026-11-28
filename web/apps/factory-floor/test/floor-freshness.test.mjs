@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sim, live } from "./_load.mjs";
+import { asUtc, exactly } from "./_moments.mjs";
 import { ev, finalize } from "./fixtures/v3.mjs";
 
 const F = await import("../src/shell/freshness.ts");
@@ -30,11 +31,11 @@ test("freshness: the warning tone past ten minutes, only while a ticket is at wo
   const old = F.freshnessOf(NOW - 10 * MIN - S, NOW, 2);
   assert.equal(old.tone, "warning");
   assert.equal(old.text, "last record 10 min ago");
-  assert.match(old.full, /^Last record 10 min ago, Tuesday 24 November 2026, 13:49:59 UTC; 2 tickets at work\. Nothing has been recorded for over 10 minutes while a ticket is at work\.$/);
+  assert.equal(old.full.split(exactly(NOW - 10 * MIN - S)).join("<moment>"), "Last record 10 min ago, <moment>; 2 tickets at work. Nothing has been recorded for over 10 minutes while a ticket is at work.");
   const idle = F.freshnessOf(NOW - 5 * 60 * MIN, NOW, 0);
   assert.equal(idle.tone, "neutral", "no ticket at work: nothing to expect, never a warning");
   assert.equal(idle.text, "no ticket at work");
-  assert.equal(idle.full, "No ticket at work. The last record 5 h ago, Tuesday 24 November 2026, 09:00:00 UTC.");
+  assert.equal(idle.full, `No ticket at work. The last record 5 h ago, ${exactly(NOW - 5 * 60 * MIN)}.`);
 });
 
 test("freshness: announced once per change of tone, never per tick", () => {
@@ -120,7 +121,7 @@ test("lost ranges: which source, between which records, the reason in words and 
   const lines = G.lostRangeLines(gaps, observer);
   assert.equal(lines.length, 3, "a conflict lost nothing; a range both hold is listed once");
   assert.deepEqual(
-    lines.map(G.lostRangeSentence),
+    lines.map((l) => asUtc(G.lostRangeSentence(l), NOW - 19 * MIN, NOW - 2 * MIN)),
     [
       "The intake log, record 12: the file became shorter than what had been read: what was cut off was not received (truncated); noticed at 13:41:00 UTC.",
       "This page's connection to the observer: before the history this page loaded (before-window).",

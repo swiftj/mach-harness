@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import "./_load.mjs";
+import { asUtc } from "./_moments.mjs";
 
 const M =await import("../src/line/lanesModel.ts");
 const O = await import("../src/shell/inspector/outcomes.ts");
@@ -63,7 +64,7 @@ test("a lane handed back: a way on, in held, its remaining tasks built one at a 
   assert.equal(line.moment.words, "Every lane is done: next, the lanes are joined.");
   let panel = M.lanesPanel(r, null);
   assert.equal(panel.groups.find((g) => g.key === "L2").note, "handed back: its finished tasks land at the join; T05 and T06 are built in the cell, one at a time, after the join");
-  assert.match(panel.summary, /Lane L2 was handed back to the cell at 10:15:00 UTC: its 2 remaining tasks \(T05 and T06\) are built in the cell, one at a time, once the lanes are joined; its 1 finished task lands at the join\./);
+  assert.match(asUtc(panel.summary, T0 + 15 * 60_000), /Lane L2 was handed back to the cell at 10:15:00 UTC: its 2 remaining tasks \(T05 and T06\) are built in the cell, one at a time, once the lanes are joined; its 1 finished task lands at the join\./);
   assert.equal(panel.groups.flatMap((g) => g.tasks).find((t) => t.task === "T05").status, "not done yet, built in the cell after the join");
 
   // Joined: its remaining tasks are built in the cell; once every one is done, said so.
@@ -96,7 +97,7 @@ test("a step recovered after an interruption, and a lane made fresh: what happen
     { type: "lane-files-set-aside", lane: "L1", task: null, at: at(21), ref: "refs/mach/lane-files/T-3/L1/1", commit: "abcdef9999" },
   ];
   const panel = M.lanesPanel(M.readLanesReply(raw), null);
-  assert.deepEqual(panel.notes, [
+  assert.deepEqual(panel.notes.map((n) => asUtc(n, T0 + 5 * 60_000 + 10_000, T0 + 6 * 60_000)), [
     "In lane L1, the step of T02 was interrupted; the station found its commit (1111111111) and recorded it, so nothing was lost.",
     "The step of T01 was interrupted; the station found its commit (abcdef1234) and recorded it, so nothing was lost.",
     `Lane L2 was made fresh at 10:05:10 UTC, because its folder, branch or record belonged to another build. Nothing was lost: what was there before is kept under ${REF}, and its earlier record beside it in the cell.`,
@@ -172,7 +173,7 @@ test("a changed test command on the side panel: which and when, never the comman
   ] });
   assert.equal(build.lanes, null);
   const panel = M.commandsPanel(build.commands);
-  assert.deepEqual(panel.lines, [
+  assert.deepEqual(panel.lines.map((l) => asUtc(l, T0 + 40 * 60_000, T0 + 50 * 60_000)), [
     "The test command changed at 10:40:00 UTC.",
     "The test and lint commands changed at 10:50:00 UTC, in revision round 1.",
     "The lint command changed, at a time not recorded.",

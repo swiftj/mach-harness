@@ -254,7 +254,8 @@ def effective(policy: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         result["enabled"] = False
         result["restricted_by_project"].append("factory.supervisor is false: this project does not allow unattended execution")
     ceiling = section.get("autonomy_ceiling")
-    if ceiling == "observe" and policy["autonomy"] == "supervised":
+    if ceiling == "observe":
+        # Said also when this machine is set to observe itself: a person's start lifts that, never the project's ceiling.
         result["autonomy"] = "observe"
         result["restricted_by_project"].append("factory.autonomy_ceiling is observe")
     for name in ("max_parallel", "max_execution_minutes", "max_runs_per_day", "max_budget_usd_per_run", "max_budget_usd_per_day", "max_attempts"):

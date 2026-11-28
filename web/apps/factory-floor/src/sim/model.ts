@@ -396,6 +396,26 @@ export interface VerificationCheck {
   readonly mock?: SimMockRecord;
 }
 
+/**
+ * A person carried a ticket on past its stop (a station's `carried_on` record): the round shown from
+ * then on and the new limit, as recorded. `person-start`: a fresh allowance, when a person started the
+ * Factory or pulled the ticket by hand; `person-decision`: one more round, by a person's decision.
+ */
+export interface CarriedOnState {
+  readonly at: number;
+  /** A carry-on past a stop, or a fresh count of the rounds (a person started the Factory). */
+  readonly outcome: "carried-on-by-person" | "rounds-reset";
+  /** The round a person reads next, and its limit, as recorded. */
+  readonly round: number | null;
+  readonly max: number | null;
+  /** The round's own number since the ticket began, and the rounds that no longer count. */
+  readonly number: number | null;
+  readonly base: number | null;
+  readonly by: "person-start" | "person-decision" | null;
+  readonly stoppedAt: "verify" | "review" | "person" | "merge" | null;
+  readonly eventId: string;
+}
+
 export interface VerificationState {
   readonly round: number;
   readonly status: "running" | VerificationStatus;
@@ -585,9 +605,15 @@ export interface CellState {
   readonly action: StepAction | null;
   readonly stationSince: number | null;
   readonly visits: readonly StationVisit[];
-  /** Judging round, 1 to 3 (build loop + 1). */
+  /** Judging round as recorded (build loop + 1), or as a person's carry-on set it; read it through sim/rounds.ts. */
   readonly round: number;
   readonly loop: number;
+  /** The round limit a person's carry-on record set; absent or null: the configured limit (MAX_ROUNDS). */
+  readonly roundMax?: number | null;
+  /** The rounds that no longer count since a person started the Factory (rounds_base); a person reads `round` less it. */
+  readonly roundBase?: number | null;
+  /** Each time a person carried the ticket on past its stop, oldest first. */
+  readonly carriedOn?: readonly CarriedOnState[];
   readonly executionId: string | null;
   readonly workflowPhase: BeltPhase | null;
   readonly suite: "unknown" | "green" | "red";

@@ -634,6 +634,70 @@ class HandOverTest(PullBase):
             self.assertEqual(run.main(["--project", str(self.eng), "factory", "disable"]), 0)
         self.assertEqual((self.runner()["source"], self.runner()["enabled"]), ("local-file", False))
 
+    def test_a_pull_sets_this_machine_from_observe_to_supervised_and_starts(self):
+        """The owner's decision: nothing stands between a person and the supervisor starting. Observe on this machine alone
+        is lifted by a person's pull, said in one sentence; the project's own ceiling still holds (the test below)."""
+        self.issues(1)
+        self.pull()
+        path = self.eng / ".factory/local/runner.json"
+        data = json.loads(path.read_text())
+        data["autonomy"] = "observe"
+        path.write_text(json.dumps(data))
+        self.detached.clear()
+        report = self.pull()
+        self.assertEqual(self.runner()["autonomy"], "supervised")
+        self.assertTrue(report["factory"]["handed_over"], report["factory"])
+        self.assertEqual(report["factory"]["observe_lifted"], "This machine was set to observe only; MACH set it to supervised, as you asked for the work to run.")
+        self.assertIn(report["factory"]["observe_lifted"], report["in_words"])
+        self.assertNotIn("runs here, in the conversation", " ".join(report["in_words"]))
+        events = [json.loads(line) for line in (self.eng / ".factory/intake/events.jsonl").read_text().splitlines() if line.strip()]
+        self.assertEqual([e["data"]["autonomy"] for e in events if e["type"] == "factory.activated"][-1], "supervised")
+
+    def test_a_pull_keeps_observe_when_the_project_asks_for_it(self):
+        self.issues(1)
+        self.pull()
+        path = self.eng / ".factory/local/runner.json"
+        data = json.loads(path.read_text())
+        data["autonomy"] = "observe"
+        path.write_text(json.dumps(data))
+        config = json.loads((self.eng / ".factory/config.json").read_text())
+        config["factory"]["autonomy_ceiling"] = "observe"
+        (self.eng / ".factory/config.json").write_text(json.dumps(config))
+        report = self.pull()
+        self.assertEqual(self.runner()["autonomy"], "observe", "the project's restriction holds")
+        self.assertIn("factory.autonomy_ceiling", report["factory"]["why_not"])
+
+    def test_factory_start_keeps_observe_and_names_the_projects_setting(self):
+        """Review finding 3: factory start uses the same check as pull's hand-over; the project's ceiling is never lifted."""
+        self.issues(1)
+        self.pull()
+        path = self.eng / ".factory/local/runner.json"
+        data = json.loads(path.read_text())
+        data["autonomy"] = "observe"
+        path.write_text(json.dumps(data))
+        config = json.loads((self.eng / ".factory/config.json").read_text())
+        config["factory"]["autonomy_ceiling"] = "observe"
+        (self.eng / ".factory/config.json").write_text(json.dumps(config))
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            run.main(["--project", str(self.eng), "factory", "start"])
+        done = json.loads(out.getvalue())
+        self.assertNotIn("observe_lifted", done)
+        self.assertEqual(self.runner()["autonomy"], "observe", "this machine's own setting is left as it was")
+        self.assertIn("factory.autonomy_ceiling", done["in_words"])
+        self.assertNotIn("set it to supervised", done["in_words"])
+        # Second check, finding 1: every field says what is in force.
+        self.assertEqual((done["factory"], done["summary"]["autonomy"]), ("observe", "observe"))
+        self.assertNotIn("Runs approved", done["summary"]["what_it_does"])
+        self.assertIn("factory.autonomy_ceiling", done["next"])
+
+    def test_a_refused_resume_resets_no_rounds(self):
+        """Review finding 7: a command that does nothing changes nothing."""
+        self.issues(1)
+        with mock.patch.object(run, "fresh_rounds", side_effect=AssertionError("a refused resume reset the rounds")):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(run.main(["--project", str(self.eng), "factory", "resume"]), 1)
+
     def test_a_project_that_keeps_the_factory_to_observing_gets_no_authorization_and_no_hand_over(self):
         self.issues(1)
         data = json.loads((self.eng / ".factory/config.json").read_text())

@@ -81,8 +81,10 @@ export interface StationMachineProps extends Common {
   elapsed?: number;
   /** A fraction with a real denominator, drawn as the dial's filled sector and "7 of 8" in the near label. */
   fraction?: Fraction;
-  /** Number of the current judging round (1..3) when the station has run more than once. */
+  /** The judging round as a person reads it, when the station has run more than once. */
   round?: number;
+  /** The round limit that round is read against (the app reads both from its records; default 3). */
+  rounds?: number;
   /** Visible label override (default: the station's name). */
   label?: string;
   /** Letter the station's name on the machine's front (lit) face, like a maker's plate. Shown at mid and near zoom. */
@@ -103,15 +105,15 @@ function fractionWords(f: Fraction | undefined): string {
  * with one tick per minute of elapsed work; only a measured `fraction` fills the dial. Idle ones have a
  * dashed rim; settled ones are quiet; planned ones are dashed outlines.
  */
-export function StationMachine({ kind, state, elapsed, fraction, round: judging, label, nameplate, settled, planned, at, variant = "atlas", lod = "mid", dimmed, showLabel }: StationMachineProps) {
+export function StationMachine({ kind, state, elapsed, fraction, round: judging, rounds = 3, label, nameplate, settled, planned, at, variant = "atlas", lod = "mid", dimmed, showLabel }: StationMachineProps) {
   const look = stations[kind];
   const st = markLook(state);
   const fw = fractionWords(fraction);
   const timing = state === "active" && elapsed !== undefined ? `, for ${formatElapsed(elapsed)}` : "";
-  const name = `${label ?? look.label}: ${planned ? "not reached yet" : st.label}${timing}${fw ? `, ${fw}` : ""}${judging && judging > 1 ? `, round ${judging} of 3` : ""}`;
+  const name = `${label ?? look.label}: ${planned ? "not reached yet" : st.label}${timing}${fw ? `, ${fw}` : ""}${judging && judging > 1 ? `, round ${judging} of ${Math.max(rounds, judging ?? 0)}` : ""}`;
   const ink = fc(st.ink);
   if (variant === "blueprint")
-    return <ProcessSymbol kind={kind} state={state} elapsed={elapsed} fraction={fraction} round={judging} at={at} label={label ?? look.label} name={name} showLabel={showLabel ?? true} dimmed={dimmed} settled={settled} planned={planned} />;
+    return <ProcessSymbol kind={kind} state={state} elapsed={elapsed} fraction={fraction} round={judging} rounds={rounds} at={at} label={label ?? look.label} name={name} showLabel={showLabel ?? true} dimmed={dimmed} settled={settled} planned={planned} />;
 
   const s = factoryTokens.size.stationPad;
   const z = at.z ?? 0;
@@ -182,7 +184,7 @@ export function StationMachine({ kind, state, elapsed, fraction, round: judging,
             {planned ? "Not reached yet" : st.label}
             {working && elapsed !== undefined ? ` · ${formatElapsed(elapsed)}` : ""}
             {fw ? ` · ${fw}` : ""}
-            {judging && judging > 1 ? ` · round ${judging} of 3` : ""}
+            {judging && judging > 1 ? ` · round ${judging} of ${Math.max(rounds, judging)}` : ""}
           </text>
         </g>
       ) : null}
@@ -197,6 +199,7 @@ function ProcessSymbol({
   elapsed,
   fraction,
   round: judging,
+  rounds = 3,
   at,
   label,
   name,
@@ -210,6 +213,7 @@ function ProcessSymbol({
   elapsed?: number;
   fraction?: Fraction;
   round?: number;
+  rounds?: number;
   at: Vec3;
   label: string;
   name: string;
@@ -260,7 +264,7 @@ function ProcessSymbol({
       ) : null}
       {judging && judging > 1 ? (
         <text x={-r - 2} y={-r + 2} textAnchor="end" style={{ fill: fc("fail"), fontSize: 9.5, fontWeight: 700 }} className="tabular">
-          ×{judging}
+          {judging}/{Math.max(rounds, judging)}
         </text>
       ) : null}
       {showLabel ? (

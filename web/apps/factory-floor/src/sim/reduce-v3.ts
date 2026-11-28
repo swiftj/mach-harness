@@ -33,10 +33,10 @@ import type {
 } from "./model";
 import { gateId } from "./model";
 import type { Authority, EntityMeta, HistoryGapState } from "./provenance";
-import type { AnyV3Event, FactoryEventV3, UnknownV3Event, V3DataMap } from "./v3";
+import type { AnyV3Event, CarriedOnData, FactoryEventV3, UnknownV3Event, V3DataMap } from "./v3";
 import { isEntityRefString, isKnownV3Kind, isSentBack, occurredMs, timeQualityOf } from "./v3";
 import type { AgentRole, AppType, ArtifactKind, BeltPhase, CellStage, ModelId, Risk, StationId, StepAction, ToolName } from "./vocabulary";
-import { ARTIFACT_KINDS, BELT_PHASES, CELL_STAGES, MAX_ROUNDS, RISKS, TOOLS } from "./vocabulary";
+import { ARTIFACT_KINDS, BELT_PHASES, CELL_STAGES, RISKS, TOOLS } from "./vocabulary";
 import { bump, EMPTY_EXECUTION_EXTRAS, newCell, put, replaceLast, schedule, setGate, withAgent, withCell, withExecution, withSlice } from "./reducer";
 
 type E<K extends keyof V3DataMap> = FactoryEventV3<K>;
@@ -1092,7 +1092,7 @@ export function gapClassOf(reason: string): string {
 // ---------------------------------------------------------------- lifecycle cases
 
 function stationEntered(input: Scene, e: E<"station.entered">, at: number): Scene {
-  let s = input;
+  let s = carryOn(input, e.ids.ticket_id, e.data.carried_on, at, e.id);
   const ticket = e.ids.ticket_id;
   const d = e.data;
   const cell = ticket ? s.cells[ticket] : undefined;
@@ -1127,7 +1127,8 @@ function stationEntered(input: Scene, e: E<"station.entered">, at: number): Scen
     action,
     stationSince: at,
     visits: [...c.visits, visit],
-    round: e.ids.round !== null ? Math.min(e.ids.round, MAX_ROUNDS) : c.round,
+    // The round as recorded, or as a person's carry-on set it: sim/rounds.ts reads it against its limit.
+    round: e.ids.round ?? c.round,
     loop: action === "revise" && e.ids.round !== null ? Math.max(0, e.ids.round - 1) : c.loop,
     cellInstance: c.cellInstance ?? e.ids.cell_instance,
     stage: stage ?? c.stage,
@@ -1178,6 +1179,7 @@ function withPlanFacts(cell: CellState, facts: { appType: string | null; risk: R
 
 function stationExited(input: Scene, e: E<"station.exited">, at: number): Scene {
   const ticket = e.ids.ticket_id;
+  input = carryOn(input, ticket, e.data.carried_on, at, e.id);
   const d = e.data;
   const stage = stageOf(d.stage);
   if (d.station === "plan" || d.app_type || d.risk) {
@@ -1215,6 +1217,34 @@ function stationExited(input: Scene, e: E<"station.exited">, at: number): Scene 
   });
 }
 
+/**
+ * A person changed the ticket's rounds (`carried_on`: the build station's carried-on-by-person or
+ * rounds-reset record): the limit in force and the rounds that no longer count from now on, and the
+ * record of it. The cell's own round stays as recorded (the round's own number since the ticket began);
+ * sim/rounds.ts reads it against these. The same record read again is kept once.
+ */
+function carryOn(s: Scene, ticket: string | null, d: CarriedOnData | null | undefined, at: number, eventId: string): Scene {
+  if (!d || !ticket || !s.cells[ticket]) return s;
+  const n = (v: unknown, min = 1): number | null => (typeof v === "number" && Number.isInteger(v) && v >= min && v <= 999 ? v : null);
+  const max = n(d.max);
+  const base = n(d.base, 0);
+  const entry = {
+    at,
+    outcome: d.outcome === "rounds-reset" ? ("rounds-reset" as const) : ("carried-on-by-person" as const),
+    round: n(d.round, 0),
+    max,
+    number: n(d.number),
+    base,
+    by: d.by === "person-start" || d.by === "person-decision" ? d.by : null,
+    stoppedAt: d.stopped_at === "verify" || d.stopped_at === "review" || d.stopped_at === "person" || d.stopped_at === "merge" ? d.stopped_at : null,
+    eventId,
+  };
+  return withCell(s, ticket, (c) => {
+    if (c.carriedOn?.some((x) => x.eventId === eventId)) return c;
+    return { ...c, roundMax: max ?? c.roundMax ?? null, roundBase: base ?? c.roundBase ?? null, carriedOn: [...(c.carriedOn ?? []), entry] };
+  });
+}
+
 /** The gate state (`scene.gates` id) a lifecycle gate evaluation sets, or null when none stands for it. */
 function gateStateOf(gate: string, verdict: "passed" | "refused" | "overridden", ticket: string, round: number): string | null {
   const passed = verdict === "passed";
@@ -1241,7 +1271,7 @@ const gateWord = (verdict: "passed" | "refused" | "overridden"): "passed" | "fai
 const overrideDetail = (d: V3DataMap["gate.evaluated"]): string => `Overridden${d.subject ? ` for ${d.subject}` : ""}: ${d.reason_code ?? "no reason code"}.`;
 
 function gateEvaluated(input: Scene, e: E<"gate.evaluated">, at: number): Scene {
-  let s = input;
+  let s = carryOn(input, e.ids.ticket_id, e.data.carried_on, at, e.id);
   const ticket = e.ids.ticket_id ?? "";
   const d = e.data;
   const round = e.ids.round;
@@ -1475,7 +1505,7 @@ function applySnapshot(input: Scene, e: E<"client.snapshot_applied">, at: number
     const stage = stageOf(c.stage);
     const prior = s.cells[c.ticket_id];
     const cell: CellState = prior ?? { ...newCell(c.ticket_id, c.slice_id ?? "", definitions, at, meta(["title", "summary", "risk", "appType", "openedAt"])), title: c.slice_id ?? c.ticket_id };
-    let next: CellState = { ...cell, stage: stage ?? cell.stage, round: c.rounds ?? cell.round, meta: { ...cell.meta, authority: "reconstructed", eventId: e.id, fields: stage ? { ...cell.meta.fields, stage: "reconstructed" } : cell.meta.fields } };
+    let next: CellState = { ...cell, stage: stage ?? cell.stage, round: c.rounds ?? cell.round, roundMax: c.round_max ?? cell.roundMax ?? null, roundBase: c.round_base ?? cell.roundBase ?? null, meta: { ...cell.meta, authority: "reconstructed", eventId: e.id, fields: stage ? { ...cell.meta.fields, stage: "reconstructed" } : cell.meta.fields } };
     // The plan's facts as the observer projected them (`plan`, else the cell's own app type and risk).
     const plan = c.plan ?? null;
     next = withPlanFacts(next, { appType: plan?.app_type ?? c.app_type ?? null, risk: riskOf(plan?.risk ?? c.risk), contracts: countOf(plan?.contracts), tasks: countOf(plan?.tasks) }, plan?.recorded_by ?? null, "reconstructed");

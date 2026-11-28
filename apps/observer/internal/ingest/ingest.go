@@ -17,9 +17,11 @@ package ingest
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"hash"
 	"hash/fnv"
@@ -158,6 +160,9 @@ type SourceStat struct {
 	Blocked    bool   `json:"blocked"`
 	// Archived: a cell's lifecycle log that is gone because cleanup archived the cell (M6.6).
 	Archived bool `json:"archived,omitempty"`
+	// Closed: a cell's lifecycle log that is gone because cleanup closed the ticket and kept no archive
+	// (an abandon deletes the cell): cleanup's run record names it. Finished, not lost.
+	Closed bool `json:"closed,omitempty"`
 	// Cell is set for a cell's source only: what its folder under .factory/worktrees/ holds now.
 	Cell *CellFiles `json:"cell,omitempty"`
 	// For execution streams: the Claude Code version, whether its records are read (false only
@@ -313,6 +318,7 @@ type source struct {
 	// archived (cells, M6.6): the cell's folder went away and the cleanup station's archive of it
 	// (`.factory/archive/<ticket>.tar.gz`) exists: finished, not lost.
 	archived bool
+	closed   bool // cleanup's run record closes it (no archive kept)
 	// preexisting: found while catching up (it was there before the observer started); liveSeen:
 	// a line written since has been read. Events derived from a preexisting source before any
 	// live line (a stream's closings, a cell's history.began) are backfill too.
@@ -647,6 +653,32 @@ func cellArchived(archives, ticket string) bool {
 	}
 	info, err := os.Lstat(filepath.Join(archives, ticket+".tar.gz"))
 	return err == nil && info.Mode().IsRegular()
+}
+
+// cellClosed reports whether cleanup's run records (.factory/archive/runs.jsonl) close this ticket:
+// a ticket abandoned (or cleaned up) without an archive, whose folder cleanup removed. Read only when
+// a cell's folder is gone, at most 16 MiB, one JSON object per line.
+func cellClosed(runs, ticket string) bool {
+	if ticket == "" {
+		return false
+	}
+	b, _, ok := readSmall(runs, 16<<20)
+	if !ok {
+		return false
+	}
+	for _, line := range bytes.Split(b, []byte("\n")) {
+		if !bytes.Contains(line, []byte(ticket)) {
+			continue
+		}
+		var r struct {
+			Ticket  string `json:"ticket_id"`
+			Outcome string `json:"outcome"`
+		}
+		if json.Unmarshal(line, &r) == nil && r.Ticket == ticket && r.Outcome != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func realDir(p string) bool {
@@ -1606,6 +1638,10 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 				src.archived = cellArchived(o.archives, src.ticket)
 			}
 			st.Archived = src.archived
+			if !src.archived && !src.closed {
+				src.closed = cellClosed(o.abs(RunsPath), src.ticket)
+			}
+			st.Closed = !src.archived && src.closed
 		}
 		if src.kind == kindCell {
 			st.Cell = &CellFiles{Ticket: src.ticket, Folder: !st.Gone, LifecycleLog: !st.Gone && r.hasSize, CellJSON: !st.Gone && src.cellInfo.Present}
@@ -1618,6 +1654,8 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 			st.State = "unreadable"
 		case st.Archived:
 			st.State = "archived"
+		case st.Closed:
+			st.State = "closed"
 		case src.gone || cp.Gone:
 			st.State = "ended"
 		case started.Sub(src.lastLine) < 10*time.Second:

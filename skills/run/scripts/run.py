@@ -11,7 +11,7 @@ and not by whoever is driving it.
     run.py status [--headless]            the next step for every open ticket and cell, and who is working on one now
     run.py explain <ticket> [--json]     why a ticket failed, was sent back or is waiting; reads only (explain.py)
     run.py decide [<ticket>...] [--json] each ticket waiting on a person, with the options it really has; reads only (decide.py)
-    run.py decide do <ticket> <option> [--by N] [--reason R] [--adr A...] [--test-cmd C] [--answers-file F] [--via terminal|floor] [--json]
+    run.py decide do <ticket> <option> [--by N] [--reason R] [--adr A...] [--test-cmd C] [--answers-file F] [--guidance G] [--via terminal|floor] [--json]
                                          records a person's decision on one option decide offers now, through its station (act.py)
     run.py current [--epic E] [--all] [--json] [--at COMMIT]
                                          how each epic works today, compiled from the shipped slice specs; reads only (current.py)
@@ -100,7 +100,7 @@ once per wait, and never inside a supervised execution. No other command here se
 
 A step is either work ("action": audit, groom, plan, build, build-lanes, revise, verify, review, merge, cleanup)
 or a stop ("action": "stop") with the reason and what it is waiting for: a person's answers, a
-person's approval, a merge, or a person to take over an escalated ticket; or an engineer's decision
+person's approval, a merge, or a person to carry on, with a fix, a ticket that failed its last round; or an engineer's decision
 about an architecture decision record (ADR): a plan that cannot follow one (adr-decision), a High-risk
 ticket's own proposal waiting to be accepted (adr-acceptance), an ADR on main that cannot be read (adr-fix), or a
 required topic (adr.required_topics) with no accepted ADR on main, so nothing is planned yet (adr-baseline);
@@ -148,6 +148,7 @@ stations' own scripts. Nothing here starts an agent, and nothing runs in the bac
 """
 
 import argparse
+import contextlib
 import hashlib
 import io
 import json
@@ -258,6 +259,20 @@ def audit_rule() -> Any:
         spec.loader.exec_module(module)
         _AUDIT_STATE.append(module)
     return _AUDIT_STATE[0]
+
+
+_ROUNDS: List[Any] = []
+
+
+def rounds_rule() -> Any:
+    """The shared rule for how many rounds a ticket has, and a person's carry-on (the intent station's rounds.py), loaded once."""
+    if not _ROUNDS:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mach_rounds", sibling("intent") / "scripts" / "rounds.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _ROUNDS.append(module)
+    return _ROUNDS[0]
 
 
 _FAULTS: List[Any] = []
@@ -380,6 +395,8 @@ class Project:
                     record = json.loads(line)
                 except ValueError:
                     continue
+                if isinstance(record, dict) and record.get("ticket_id") == ticket_id and record.get("outcome") == "abandoned":
+                    return f"This ticket was abandoned at {record.get('closed_at') or 'an earlier time'}: its work was deleted from this machine."
                 if isinstance(record, dict) and record.get("ticket_id") == ticket_id:
                     return (f"This ticket is finished: it was {record.get('outcome', 'closed')} and cleaned up "
                             + (f"({record['archive']})." if isinstance(record.get('archive'), str) else "(no archive kept, cleanup.archive)."))
@@ -545,6 +562,22 @@ def next_step(project: Project, ticket_id: str, headless: bool, meet_on_main: bo
     if stage == "built":
         decision = load_json(root / "review" / "decision.json", {}) or {}
         summary = load_json(root / "evidence" / "summary.json", {}) or {}
+        state = load_json(root / "build.json", {}) or {}
+        carried = rounds_rule().pending(root, state.get("loop") if isinstance(state, dict) else 0)
+        if carried:
+            # A person carried this stopped ticket on (build.py carry-on): its next step is the builder's revision, on the same branch,
+            # with the last findings and the person's guidance. Nothing already built is redone.
+            findings = str(root / carried["findings"]) if isinstance(carried.get("findings"), str) and carried["findings"] else None
+            guidance = root / carried["guidance"] if isinstance(carried.get("guidance"), str) and carried["guidance"] else None
+            guided = guidance is not None and guidance.is_file()
+            who = rounds_rule().who(carried)
+            return step(ticket_id, stage, "revise", f"{who}; the builder revises it in round {carried.get('round')} "
+                        f"of {carried.get('max_rounds')}, with the last findings" + (" and the person's guidance." if guided else "."),
+                        agent_type=agent_type("builder"), findings=findings, guidance=str(guidance) if guided else None,
+                        prompt=f"Revise MACH ticket {ticket_id}. {who}. Findings: {findings or 'none recorded'}."
+                        + (f" The person's guidance, in their words: {guidance}. Read it first. {rounds_rule().GUIDANCE_FENCE}" if guided else "")
+                        + " Make the smallest change that answers the findings" + (" and the guidance" if guided else "")
+                        + "; keep everything already proven, and do not redo work the findings do not name.")
         if decision.get("outcome") == "REJECTED" and decision.get("head") == head:
             return step(ticket_id, stage, "revise", ("A person sent this build back." if decision.get("rejected_by") == "a person" else "The merge station sent this build back." if decision.get("rejected_by") else "Review rejected this build."), agent_type=agent_type("builder"), findings=decision.get("findings"),
                         prompt=f"Revise MACH ticket {ticket_id} after a rejected review. Findings: {decision.get('findings')}")
@@ -561,7 +594,7 @@ def next_step(project: Project, ticket_id: str, headless: bool, meet_on_main: bo
         lapsed = exceptions_lapsed(decided)
         if lapsed and (decided.get("head") == head or (cell.get("revalidated") or {}).get("head") == head or record_commit(work, cell, decided, head)):
             return step(ticket_id, stage, "stop", f"The security exception for {', '.join(lapsed)} has expired, so the security veto stands again and the ticket "
-                        "is not approved or merged over it. A person records a new exception or abandons the ticket.", needs="security-exception-expired",
+                        "is not approved or merged over it. A person records a new exception, or lets the builder fix the finding.", needs="security-exception-expired",
                         exceptions=lapsed)
     if stage == "awaiting-human":
         decided = load_json(root / "review" / "decision.json", {}) or {}
@@ -591,8 +624,27 @@ def next_step(project: Project, ticket_id: str, headless: bool, meet_on_main: bo
                         prompt=f"Use the MACH cleanup skill: {skill('cleanup')} {ticket_id}")
         return step(ticket_id, stage, "stop", f"Approved. The branch {cell.get('branch')} is ready to merge; MACH does not merge.", needs="merge")
     if stage == "blocked":
-        return step(ticket_id, stage, "stop", "The ticket failed its third round and was escalated." + early_note(cell), needs="person-to-take-over")
-    return step(ticket_id, stage, "stop", f"The cell is in an unknown stage ('{stage}').", needs="person-to-take-over")
+        return step(ticket_id, stage, "stop", stopped_reason(root, cell, project.config) + early_note(cell), needs="person-to-take-over",
+                    command=f"{skill('run')} decide do {ticket_id} carry-on")
+    return step(ticket_id, stage, "stop", f"The cell is in an unknown stage ('{stage}'). A person can carry it on with a fix: {skill('run')} decide {ticket_id}.",
+                needs="person-to-take-over")
+
+
+def stopped_reason(root: Path, cell: Dict[str, Any], config: Dict[str, Any]) -> str:
+    """Why a ticket stopped at its last round, and that a person carries it on with a fix, in one or two sentences."""
+    state = load_json(root / "build.json", {}) or {}
+    loop = state.get("loop") if isinstance(state, dict) and isinstance(state.get("loop"), int) else 0
+    limit = rounds_rule().limit(config, root)
+    decision = load_json(root / "review" / "decision.json", {}) or {}
+    summary = load_json(root / "evidence" / "summary.json", {}) or {}
+    what = "it failed"
+    if isinstance(decision, dict) and decision.get("outcome") == "ESCALATE":
+        what = "a person sent it back" if decision.get("rejected_by") == "a person" else "the review panel rejected it"
+    elif isinstance(summary, dict) and summary.get("status") == "FAIL_WITH_EVIDENCE":
+        what = "verification failed it"
+    counted = min(rounds_rule().used(root, loop), limit)
+    return (f"The ticket stopped after {what} in round {counted} of {limit}, its last. A person can carry it on with a fix: the builder "
+            f"gets one more round on the same branch, with the findings and what the person says to do ({skill('run')} decide {root.name}).")
 
 
 def test_command_note(root: Path, ticket_id: str, started: bool) -> Optional[Tuple[str, str]]:
@@ -836,7 +888,7 @@ NEEDS_TEXT = {
     "policy-owner": "A policy's owner accepts the flagged concern, or the spec changes so the policy is met.",
     "human-approval": "Approve the change, or not, after reading the review findings.",
     "merge": "Merge the approved branch; the project's settings keep merging for a person.",
-    "person-to-take-over": "Take over the escalated ticket: it used all its judging rounds.",
+    "person-to-take-over": "It failed its last round. Carry it on with a fix: the builder gets one more round, with the findings and your words.",
     "repository-hardening": "Harden the repository first: its readiness tier is Bronze.",
     "person": "Dispatch this ticket on its own.",
     "worker-in-cell": "Another worker is on this ticket's step, so the Factory left it alone. Name the ticket (/mach <ticket>) and MACH takes it over at once.",
@@ -848,7 +900,7 @@ NEEDS_TEXT = {
     "adr-acceptance": "Accept the architecture decision this High-risk ticket proposes, or not: the build waits for it.",
     "adr-fix": "Fix an architecture decision record the factory cannot read, by pull request.",
     "adr-baseline": "Write down the project's basic technical decisions as accepted ADRs (adr baseline drafts them); no ticket is planned until then.",
-    "security-exception-expired": "A person's exception to a security blocker has expired: record a new one, or abandon the ticket.",
+    "security-exception-expired": "A person's exception to a security blocker has expired: record a new one, or let the builder fix the finding.",
     "main-conflict": "Bringing the ticket's branch up to date with the main branch conflicts: merge it in the cell and resolve it, then the build carries on.",
 }
 
@@ -924,7 +976,8 @@ def recorded_cost(project: Project, ticket_ids: Sequence[str]) -> Dict[str, Any]
 def digest(project: Project, info: Dict[str, Any]) -> Dict[str, Any]:
     """Three lines for the top of a ticket's status: where it is, what a person must decide, time and cost."""
     ticket_id, stage, action = info.get("ticket_id"), info.get("stage"), info.get("action")
-    place = f"stage {stage}" if stage else "no cell yet"
+    place = f"stage {stage}" if stage else ("no cell: it was abandoned and its work deleted" if str(info.get("reason") or "").startswith("This ticket was abandoned")
+                                            else "no cell: finished" if info.get("needs") == "nothing" else "no cell yet")
     where = f"{ticket_id}: {place}; " + (f"stopped: {info.get('reason')}" if info.get("stop") else f"next: {action}. {info.get('reason')}")
     needs = info.get("needs") if info.get("stop") else None
     if needs and needs != "nothing":
@@ -1067,6 +1120,109 @@ def out_of_scope(project: Project, ticket_id: str) -> Optional[Dict[str, Any]]:
             "reason": f"This Factory execution was started for {scope} only. {ticket_id} needs its own dispatch; nothing was done to it."}
 
 
+def work_at_stake(project: Project, ticket_id: str) -> Optional[Dict[str, int]]:
+    """What abandoning the ticket deletes that is nowhere else: its branch's commits the main checkout's HEAD does not have, and the
+    uncommitted files in its checkout. Read-only git queries; None when they cannot be counted."""
+    root = project.cell_dir(ticket_id)
+    cell = load_json(root / "cell.json", {}) or {}
+    if not isinstance(cell, dict) or cell.get("isolation") != "worktree":
+        return {"unmerged_commits": 0, "uncommitted_files": 0} if isinstance(cell, dict) and cell else None
+    commits = 0
+    if isinstance(cell.get("branch"), str) and cell["branch"]:
+        counted = git(project.root, "rev-list", "--count", f"refs/heads/{cell['branch']}", "^HEAD")
+        if counted.returncode != 0 or not counted.stdout.strip().isdigit():
+            return None
+        commits = int(counted.stdout.strip())
+    files = 0
+    if (root / "repo").is_dir():
+        listed = git(root / "repo", "status", "--porcelain", "--untracked-files=all")
+        files = len([line for line in listed.stdout.splitlines() if line.strip()]) if listed.returncode == 0 else 0
+    return {"unmerged_commits": commits, "uncommitted_files": files}
+
+
+def cell_tickets(project: Project) -> List[str]:
+    """Every ticket with a cell in this project."""
+    base = project.root / ".factory" / "worktrees"
+    return sorted(path.parent.name for path in base.glob("*/cell.json") if TICKET_ID_RE.match(path.parent.name)) if base.is_dir() else []
+
+
+def fresh_rounds(project: Project, tickets: Sequence[str], via: str = "terminal", start: str = "ticket") -> Dict[str, Any]:
+    """A person started the line (pull, factory start or resume, or named the ticket): each ticket's rounds count from zero again
+    (rounds.start_afresh). A ticket stopped for its rounds is carried on from the build station's revision with its last findings,
+    and the supervisor's attempt count and hold for it are cleared, so it is picked up again. Nothing built is redone and no record
+    is written over. Never inside a supervised execution, so the Factory on its own never gets a fresh set: the limit holds there.
+    Returns {"reset": [tickets], "carried_on": [tickets], "said": [one sentence per ticket carried on]}."""
+    done: Dict[str, Any] = {"reset": [], "carried_on": [], "said": []}
+    if os.environ.get(EXECUTION_ENV) or execution_scope(project) is not None:
+        return done
+    found = git(project.root, "config", "user.name")
+    by = (found.stdout.strip() if found.returncode == 0 else "") or "a person"
+    rule = rounds_rule()
+    for ticket_id in dict.fromkeys(tickets):
+        if not isinstance(ticket_id, str) or not TICKET_ID_RE.match(ticket_id) or not (project.cell_dir(ticket_id) / "cell.json").is_file():
+            continue
+        try:
+            answer = rule.start_afresh(project.cell_dir(ticket_id), project.config, by=by if len(by) >= 2 else "a person", via=via, start=start)
+        except Exception:  # noqa: BLE001 - the person's start goes on; this ticket keeps the count it had
+            answer = None
+        if not answer:
+            continue
+        done["reset"].append(ticket_id)
+        if answer.get("status") == "CARRIED_ON":
+            done["carried_on"].append(ticket_id)
+    done["said"] = fresh_words(done, {})
+    if done["reset"]:
+        release_holds(project, done["reset"])
+        with contextlib.suppress(Exception):  # a running supervisor looks again now, so a ticket carried on is picked up at once
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import activation
+            activation.wake_note(project.root, "fresh-rounds")
+    return done
+
+
+def fresh_words(done: Dict[str, Any], carrying: Dict[str, str]) -> List[str]:
+    """What a person's start did to each ticket's rounds, as is true: a ticket that had used all its rounds is said to be carried on
+    only where work really started on it (`carrying`: ticket -> "factory" or "here"); otherwise it has a fresh set and is carried on
+    by the next start. A ticket in the middle of its rounds: one sentence for all of them."""
+    said = []
+    for ticket_id in done.get("carried_on") or []:
+        how = carrying.get(ticket_id)
+        if how == "factory":
+            said.append(f"Ticket {ticket_id} had used all its rounds; MACH gave it a fresh set and the Factory is carrying it on from the last findings.")
+        elif how == "here":
+            said.append(f"Ticket {ticket_id} had used all its rounds; MACH gave it a fresh set and carries it on here from the last findings.")
+        else:
+            said.append(f"Ticket {ticket_id} had used all its rounds; MACH gave it a fresh set. Its next step is the builder's revision from the last "
+                        f"findings, which the Factory or {skill('run')} {ticket_id} carries on.")
+    others = [ticket_id for ticket_id in done.get("reset") or [] if ticket_id not in (done.get("carried_on") or [])]
+    if others:
+        names = others[0] if len(others) == 1 else ", ".join(others[:-1]) + " and " + others[-1]
+        said.append(f"Ticket {names} starts with a fresh set of rounds." if len(others) == 1 else f"Tickets {names} start with a fresh set of rounds.")
+    return said
+
+
+def release_holds(project: Project, tickets: Sequence[str]) -> None:
+    """The supervisor's attempt count and hold for these tickets, cleared under the intake lock after a person's start. A hold kept
+    for a reason a fresh start does not change (its risk tier; a merge or cleanup whose outcome is not known) stays."""
+    ledger_path = project.root / ".factory" / "intake" / "ledger.json"
+    if not ledger_path.is_file():
+        return
+    try:
+        _, line = factory(project)
+        with line.lock("fresh-rounds"):
+            ledger = line.ledger()
+            held = ledger.setdefault("supervisor", {})
+            for ticket_id in tickets:
+                (held.get("attempts") or {}).pop(ticket_id, None)
+                record = (held.get("parked") or {}).get(ticket_id)
+                reason = str((record or {}).get("reason") or "")
+                if record is not None and not reason.startswith("Its risk tier") and "never retried automatically" not in reason:
+                    held["parked"].pop(ticket_id, None)
+            line.save(ledger)
+    except Exception:  # noqa: BLE001 - the rounds are fresh either way; a hold left is lifted by factory resume --retry
+        pass
+
+
 def cmd_next(project: Project, args: argparse.Namespace) -> int:
     refused = out_of_scope(project, args.ticket_id)
     if refused:
@@ -1082,7 +1238,10 @@ def cmd_next(project: Project, args: argparse.Namespace) -> int:
     if named and not person:
         raise RunError("--by-person and --take-over are a person's word, and this runs inside a supervised Factory execution: it never takes "
                        "a step over. Nothing was claimed.")
+    fresh = fresh_rounds(project, [args.ticket_id]) if named else {"said": []}  # a person named it: its rounds count from zero again
     found = next_step(project, args.ticket_id, args.headless)
+    if fresh["said"]:
+        found.setdefault("warnings", []).extend(fresh_words(fresh, {args.ticket_id: "here"} if not found.get("stop") else {}))
     if person and found.get("needs") == "landed-elsewhere":
         # The meeting point: a person carries a second copy of a slice on to the merge station, which brings main in and lands what
         # this copy still changes, or closes it out when nothing differs.
@@ -1403,7 +1562,7 @@ def cmd_decide(project: Project, args: argparse.Namespace) -> int:
     import decide
     doing = args.ticket_ids[:1] == ["do"]
     given_for_do = [flag for flag, value in (("--by", args.by), ("--reason", args.reason), ("--adr", args.adr), ("--test-cmd", args.test_cmd),
-                                             ("--answers-file", args.answers_file), ("--via", args.via), ("--to-factory", args.to_factory or None)) if value is not None]
+                                             ("--answers-file", args.answers_file), ("--guidance", args.guidance), ("--via", args.via), ("--to-factory", args.to_factory or None)) if value is not None]
     if doing and len(args.ticket_ids) != 3:
         args.decide_parser.error("decide do takes a ticket and one option key: decide do <ticket> <option> [--by NAME] [--reason WHY] ...")
     if not doing and given_for_do:
@@ -1426,7 +1585,7 @@ def cmd_decide(project: Project, args: argparse.Namespace) -> int:
     try:
         report = decide.main(ticket_ids, project.root, config=project.config, next_step=lambda ticket_id: next_step(project, ticket_id, False),
                              intent_skill=skill("intent"), run_skill=skill("run"), held_by=lambda ticket_id: held_by_worker(project, ticket_id),
-                             factory_run=lambda ticket_id: held_by_factory_run(project, ticket_id))
+                             factory_run=lambda ticket_id: held_by_factory_run(project, ticket_id), at_stake=lambda ticket_id: work_at_stake(project, ticket_id), mine=getattr(args, "holder", None))
     except decide.DecideError as exc:
         raise RunError(str(exc))
     if resolved:
@@ -1522,7 +1681,7 @@ def cmd_decide_do(project: Project, args: argparse.Namespace, decide: Any, ticke
         try:
             return decide.main([ticket], project.root, config=project.config, next_step=lambda ticket_id: next_step(project, ticket_id, False),
                                intent_skill=skill("intent"), run_skill=skill("run"), held_by=lambda ticket_id: held_by_worker(project, ticket_id),
-                               factory_run=lambda ticket_id: held_by_factory_run(project, ticket_id))
+                               factory_run=lambda ticket_id: held_by_factory_run(project, ticket_id), at_stake=lambda ticket_id: work_at_stake(project, ticket_id), mine=getattr(args, "holder", None))
         except decide.DecideError as exc:
             raise act.ActError(str(exc))
 
@@ -1535,7 +1694,7 @@ def cmd_decide_do(project: Project, args: argparse.Namespace, decide: Any, ticke
     try:
         # The take-over seam (decide_take_over): the same take-over `next` makes for a person who names the ticket.
         result = act.main(ticket_id, key, project.root, report=report, by=by, reason=args.reason, adrs=args.adr, test_cmd=args.test_cmd,
-                          answers_file=answers, via=via, station=act.station_runner(project.root, sibling),
+                          answers_file=answers, via=via, guidance=args.guidance, station=act.station_runner(project.root, sibling),
                           line=lambda: factory(project)[1], carry_on=act.supervisor_carry_on(lambda: factory_context(project), tickets=[ticket_id], start=via != "floor"),
                           take_over=decide_take_over(project), to_factory=bool(args.to_factory), run_skill=skill("run"), on_wait=waiting)
     except act.ActError as exc:
@@ -1614,6 +1773,8 @@ def cmd_schedule(project: Project, args: argparse.Namespace) -> int:
     if getattr(args, "holder", None) is not None and not claims().valid_holder(args.holder):
         raise RunError("--holder takes the holder token an earlier answer printed (hex).")
     scope = execution_scope(project)
+    # A person named them: fresh rounds, unless this only shows what would start.
+    fresh = fresh_rounds(project, args.ticket_ids) if getattr(args, "named", False) and not getattr(args, "dry_run", False) else {"said": []}
     beside: List[str] = []
     if scope is not None:
         others = [ticket_id for ticket_id in args.ticket_ids if ticket_id != scope]
@@ -1632,6 +1793,8 @@ def cmd_schedule(project: Project, args: argparse.Namespace) -> int:
         raise RunError(str(exc))
     if resolved:
         report["resolved_from"] = {ticket_id: typed for typed, ticket_id in resolved.items()}
+    if fresh["said"]:
+        report["warnings"] = list(report.get("warnings") or []) + fresh["said"]
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
 
@@ -2063,6 +2226,10 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
                 result["prepared"] = before
                 if before.get("warnings"):
                     result["warnings"] = before["warnings"] + list(result.get("warnings") or [])
+            if person:  # an engineer named these slices: their tickets' rounds count from zero again
+                fresh = fresh_rounds(project, [str(ticket_id) for ticket_id in result.get("tickets") or []])
+                if fresh["said"]:
+                    result["warnings"] = list(result.get("warnings") or []) + fresh["said"]
             result["workflow"] = "mach-belt" if PROJECT_INSTALL else "mach:belt"
             result["run_one"] = [f"{skill('run')} {ticket_id}" for ticket_id in result["tickets"]]
         else:
@@ -2112,6 +2279,8 @@ def cmd_pull(project: Project, args: argparse.Namespace) -> int:
     import activation
     import pull
     import schedule
+    # A person's pull starts the line: every ticket's rounds count from zero again, and one stopped for its rounds carries on.
+    fresh = fresh_rounds(project, cell_tickets(project), start="factory") if not args.dry_run else {"said": [], "reset": [], "carried_on": []}
     intake, line = factory(project)
     ctx = factory_context(project, line)
     try:
@@ -2125,6 +2294,13 @@ def cmd_pull(project: Project, args: argparse.Namespace) -> int:
         if exc.__class__.__name__ in ("PolicyError", "ServiceError", "PluginError"):
             raise RunError(str(exc))
         raise
+    if fresh["reset"]:
+        factory_section = report.get("factory") or {}
+        running = bool(factory_section.get("handed_over")) and factory_section.get("supervisor") not in (None, "none")
+        carrying = {ticket: ("factory" if running and ticket in (factory_section.get("tickets") or []) else "here" if ticket in (report.get("run") or []) else "")
+                    for ticket in fresh["carried_on"]}
+        report["fresh_rounds"] = {"reset": fresh["reset"], "carried_on": fresh["carried_on"]}
+        report["in_words"] = fresh_words(fresh, {key: value for key, value in carrying.items() if value}) + list(report.get("in_words") or [])
     print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else pull.human(report))
     return 0
 
@@ -2936,6 +3112,16 @@ def cmd_factory(project: Project, args: argparse.Namespace) -> int:
         if exc.__class__.__name__ in ("IntakeError", "PolicyError", "ServiceError"):
             raise RunError(str(exc))
         raise
+    # A person starting the Factory (start, enable, resume) starts the line: every ticket's rounds count from zero again, and one stopped
+    # for its rounds carries on (the supervisor is woken for it). Only once the start or resume really happened: a refused one changes
+    # nothing. The supervisor's own passes and restarts (serve, tick, wake) never do this.
+    started = isinstance(result, dict) and ((args.action in ("enable", "start") and bool(result.get("enabled")) and not result.get("held_by")) or (args.action == "resume" and bool(result.get("resumed"))))
+    fresh = fresh_rounds(project, cell_tickets(project), start="factory") if started else {"reset": []}
+    if fresh["reset"]:
+        running = result.get("supervisor") in ("started", "converted", "already-running", "service", "woken")
+        fresh["said"] = fresh_words(fresh, {ticket: "factory" for ticket in fresh["carried_on"]} if running else {})
+        result["fresh_rounds"] = {key: fresh[key] for key in ("reset", "carried_on", "said")}
+        result["in_words"] = " ".join(part for part in (*fresh["said"], result.get("in_words")) if isinstance(part, str) and part)
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 1 if args.action in ("enable", "start") and not result.get("ready", True) and not result.get("enabled") else 0
 
@@ -2976,6 +3162,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--adr", metavar="ADR-NNNN", action="extend", nargs="+", help="decide do: the ADRs an accept is for (default: every one on offer)")
     p.add_argument("--test-cmd", metavar="CMD", help="decide do set-test-command: the command that runs the tests")
     p.add_argument("--answers-file", metavar="FILE", help='decide do answers: a JSON file, [{"n": 1, "answer": "..."}, {"n": 2, "leave_open": true}]')
+    p.add_argument("--guidance", metavar="TEXT", help="decide do carry-on: what the builder should do differently, in the person's words (optional)")
+    p.add_argument("--holder", metavar="H", help="this conversation's holder token: its own claim on a ticket is not another worker's")
     p.add_argument("--via", choices=("terminal", "floor"), help="decide do: where the person decided (default: terminal)")
     p.add_argument("--to-factory", action="store_true",
                    help="decide do take-over: the Factory carries the ticket on afterwards (with --via=floor it always does); "
@@ -3029,7 +3217,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = product.add_parser("intake", help="take ready slices in: a slice issue is its own ticket; a ready folder gets a local ticket")
     p.add_argument("--dry-run", action="store_true", help="show what would be taken in; change nothing")
     p.add_argument("--fetch", action="store_true", help="fetch from the shared repository first (never changes the checkout)")
-    p.add_argument("--reissue", action="append", metavar="SLICE-ID", help="put a slice whose work was abandoned back in the queue, on the same ticket")
+    p.add_argument("--reissue", action="append", metavar="SLICE-ID", help="put a slice whose work was abandoned back in the queue, on the same ticket; its earlier work was deleted, so it is planned and built again from its spec")
     p.set_defaults(func=cmd_product)
     p = product.add_parser("import", help="take in a ready folder handed over outside Git; only on an engineer's explicit command")
     p.add_argument("folder", help="a product/ready/SLICE-NNN folder: slice.json, spec.md and why.md")

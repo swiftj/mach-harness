@@ -17,7 +17,7 @@ import { APP_TYPES, RISKS, type AnalyticsFilters, type AnalyticsSnapshot, type C
 import type { InsightsReply } from "../data/types";
 import type { RunConfigs } from "../model/cohorts";
 import type { AreaId } from "../model/findings";
-import { clockText, dayText, windowText } from "../model/format";
+import { clockInline, dayText, windowText } from "../model/format";
 import { simulatedInsights } from "../model/insights";
 import { Compare } from "./areas/Compare";
 import { Economics } from "./areas/Economics";
@@ -286,5 +286,5 @@ export function AnalyticsWorkspace({ load, initial, onState, sourceLabel }: { lo
       };
     });
   }, []);
-  return <AnalyticsView data={{ state: "ready", value: snapshot }} insights={insights} source="simulation" asOf={`As of ${clockText(snapshot.generated_at_ms)}`} sourceLabel={sourceLabel} view={view} onView={onView} onOpen={() => undefined} />;
+  return <AnalyticsView data={{ state: "ready", value: snapshot }} insights={insights} source="simulation" asOf={`As of ${clockInline(snapshot.generated_at_ms)}`} sourceLabel={sourceLabel} view={view} onView={onView} onOpen={() => undefined} />;
 }

@@ -1,6 +1,42 @@
-# MACH release notes: 0.27.0
+# MACH release notes: 0.28.0
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.28.0
+
+A ticket that stops is carried on from where it stands, never started again, and each of the two apps opens with its own command.
+
+### A stopped ticket carries on
+
+| Change | What it is |
+| --- | --- |
+| Carry on with a fix | When a ticket has used its rounds, the first choice is "Carry on with a fix". You may say what the builder should do differently. The builder gets one more round on the same branch with the last findings and your words, and verification and review run again. Nothing already built is redone. You can do this as often as you need. |
+| In the terminal and on the Factory Floor | `/mach decide` offers it first. On the Factory Floor, click a "Stopped" box to see what failed, each failed check with the verifier's or reviewer's note, and carry on from there. |
+| A fresh set of rounds when you start | `/mach pull`, starting or resuming the Factory, or naming a ticket gives every ticket its full rounds again. A ticket that had stopped for its rounds is carried on by itself from the last findings. The Factory's own unattended passes never do this, so a ticket that keeps failing still stops for a person. |
+| Your send-back is the guidance | Sending a ticket back in its last round no longer stops it. The builder gets the round with your reason. |
+| MACH never proposes giving up | MACH does not suggest abandoning a ticket, building a slice again from the start, or fixing a branch by hand. Abandoning is done only when you ask for it, and it is never the only choice or the first. |
+| Abandoning deletes | An abandoned ticket's cell, its branch on this computer and everything MACH kept for it are deleted. Nothing is archived unless you ask (`--keep-archive`). |
+| No archive unless you ask | Finished tickets keep no archive by default. `cleanup.archive` in `.factory/config.json` turns archives on (`raised` or `all`). |
+| `/mach pull` runs the work | A computer whose older setting kept the Factory to observing no longer holds a pull in the conversation: MACH sets it to run work and says so. A project's own setting (`factory.autonomy_ceiling`, `factory.supervisor`) still holds, and MACH names it. `/mach pull --here` keeps the work in the conversation. |
+
+### Two commands open the two apps
+
+| Change | What it is |
+| --- | --- |
+| `/mach-studio` | With nothing after it, opens Product Studio in your browser. With the plugin it is `/mach:studio`. |
+| `/mach floor` | Opens the Factory Floor in your browser. With the plugin it is `/mach:run floor`. |
+| `link` and `stop` | `/mach-studio link`, `/mach-studio stop`, `/mach floor link` and `/mach floor stop` give a fresh link without opening a browser, or stop the app. |
+| `/mach-app` is gone | The two commands above replace it. Updating MACH removes it from a project. |
+| Where things stand, in the terminal | `/mach-studio status`, or ask in words. |
+
+### The Factory Floor
+
+| Change | What it is |
+| --- | --- |
+| Rounds read true | A stopped ticket reads the rounds it used, "3 of 3", never a round past its limit. After one more round it reads "4 of 4"; after a fresh set, "1 of 3". The history marks where a person gave a round or a fresh set. |
+| The Line | A stopped box says "Sent back 3 times". The dashed line that started from nothing is gone; a send-back line is drawn only between two boxes. |
+| A stopped ticket says what it waits for | It waits for a person, and the Floor says what happens once someone decides. |
+| Dates with times | Both apps show the day with the time: "Today 14:53", "Yesterday 20:02", "24 Nov 20:02", how long ago for older moments, and the full date and time zone when you point at it. |
 
 ## What changed in 0.27.0
 

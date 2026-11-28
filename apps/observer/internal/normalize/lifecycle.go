@@ -223,6 +223,45 @@ func (l *Lifecycle) Line(line []byte, r Read) []*event.Event {
 	return out
 }
 
+// The outcomes the build station records when a person changes a ticket's rounds (rounds.py): a carry-on
+// of a stopped ticket (by a person's decision, one more round; or by a person starting the Factory, a
+// fresh set), and a reset of the count when a person starts the Factory on a ticket that is not stopped.
+const (
+	CarriedOnOutcome   = "carried-on-by-person"
+	RoundsResetOutcome = "rounds-reset"
+)
+
+// carriedOn keeps what such a record says of the rounds, as data.carried_on: the outcome, who gave
+// them, the round a person reads and its limit, the round's own number since the ticket began, and the
+// rounds that no longer count (rounds_base). Absent on every other record.
+func carriedOn(d, in map[string]any, used map[string]bool) {
+	outcome, _ := in["outcome"].(string)
+	if outcome != CarriedOnOutcome && outcome != RoundsResetOutcome {
+		return
+	}
+	num := func(min int64, keys ...string) any {
+		for _, k := range keys {
+			if v, ok := in[k]; ok {
+				used[k] = true
+				if n, ok := redact.Int(v); ok && n >= min && n <= 999 {
+					return n
+				}
+			}
+		}
+		return nil
+	}
+	out := map[string]any{"outcome": outcome, "round": num(0, "round"), "max": num(1, "max_rounds"), "number": num(1, "round_number"), "base": num(0, "rounds_base"), "by": nil, "stopped_at": nil}
+	if v, ok := in["by"]; ok {
+		used["by"] = true
+		out["by"] = enum(v, "person-start", "person-decision")
+	}
+	if v, ok := in["stopped_at"]; ok {
+		used["stopped_at"] = true
+		out["stopped_at"] = enum(v, "verify", "review", "person", "merge")
+	}
+	d["carried_on"] = out
+}
+
 // laneOf is a lane's name as the build station writes it (L1, L2, ...), or null.
 func laneOf(v any) any {
 	if s, ok := v.(string); ok && laneRe.MatchString(s) {
@@ -298,6 +337,7 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		}
 		d["head"] = commitOrNil(get("head"))
 		get("round")
+		carriedOn(d, in, used)
 		d["counts"] = counts(in, used)
 		l.visits[vid] = &visit{enteredMS: at, eventID: ev.ID, items: map[string]bool{}}
 	case "station.exited":
@@ -332,6 +372,7 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 			d["widened"] = boolOrNil(get("widened"))
 			d["widened_rule"] = enum(get("widened_rule"), SmallRules...)
 		}
+		carriedOn(d, in, used)
 		d["counts"] = counts(in, used)
 	case "gate.evaluated":
 		gate, _ := get("gate").(string)
@@ -372,6 +413,7 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		if _, ok := in["lane"]; ok && station == "build" {
 			d["lane"] = laneOf(get("lane"))
 		}
+		carriedOn(d, in, used)
 		d["counts"] = counts(in, used)
 		if s, ok := subject.(string); ok && strings.Contains(gate, "review") {
 			if seat := enum(s, seats...); seat != nil {

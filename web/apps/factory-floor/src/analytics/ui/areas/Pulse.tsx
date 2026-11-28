@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
  * executions ended), each with at most two quiet supporting figures; and the data's own coverage.
  */
 import { groupedKey, type MetricRow } from "../../contract";
-import { clockText, count, coverageText, dayText, durationText, pct, plural, usd, valueText, windowText } from "../../model/format";
+import { clockInline, clockText, count, coverageText, dayText, durationText, pct, plural, usd, valueText, windowText } from "../../model/format";
 import { beltShares, costSeries, outcomePartition, readinessLine, type OutcomeKey } from "../../model/pulse";
 import { durationShows, MIN_TREND_MEMBERS, MIN_TREND_PERIODS, SMALL_SAMPLE, shareText, verdictAllowed } from "../../model/sample";
 import { grainFor, periodSeries } from "../../model/series";
@@ -510,7 +510,7 @@ function Coverage() {
   const reads = s.freshness.some((f) => f.last_read_ms != null);
   return (
     <section className="an-section" aria-labelledby="pulse-coverage">
-      <SectionHead id="pulse-coverage" title="Data coverage and freshness" question={`${asOf}. Generated ${clockText(s.generated_at_ms)} for ${windowText(s.window.from_ms, s.window.to_ms)}.`} />
+      <SectionHead id="pulse-coverage" title="Data coverage and freshness" question={`${asOf}. Generated ${clockInline(s.generated_at_ms)} for ${windowText(s.window.from_ms, s.window.to_ms)}.`} />
       <div className="overflow-x-auto">
         <table className="an-table">
           <thead>

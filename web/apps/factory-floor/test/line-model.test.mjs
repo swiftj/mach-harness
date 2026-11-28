@@ -99,7 +99,7 @@ test("stopped: a blocked cell is stopped at its last station, says why, and need
   assert.equal(r.state, "stopped");
   assert.match(r.why, new RegExp(`round ${MAX_ROUNDS}, the last of ${MAX_ROUNDS}`));
   assert.equal(r.command, "/mach decide 132");
-  assert.equal(r.needs, "Read why, then re-plan it, fix it by hand, or abandon it.");
+  assert.equal(r.needs, "Read what failed, then carry it on with a fix: the builder takes it up again at the build step. /mach decide in Claude Code lists what can be done.");
 });
 
 test("held: a recorded wait for a free place says so, with its limit; otherwise the next station, never an invented reason", () => {

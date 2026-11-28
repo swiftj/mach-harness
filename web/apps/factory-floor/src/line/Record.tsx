@@ -3,14 +3,15 @@
  * there (the models recorded), how long it took and how that is known, what the station decided,
  * and what to look at, from which the evidence player is reached. Read only.
  */
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { CommandLine, Dialog, DialogContent } from "@mach/ui";
-import { MAX_ROUNDS, type CellState, type StationVisit } from "../sim";
+import { MAX_ROUNDS, carriedOnTitle, carriedOnWords, type CarriedOnState, type CellState, type StationVisit } from "../sim";
 import { useScene, useStore } from "../scene";
 import { FreeText } from "../shell/inspector/FreeText";
 import { visitStateWords } from "../shell/inspector/outcomes";
 import { planWords } from "../shell/inspector/words";
 import { duration } from "../shell/time";
+import { When } from "../shell/When";
 import { columnOf, LINE_STATIONS, reviewOfVisit, visitRoundWords, type LineRow } from "./model";
 import { StatePill } from "./Marks";
 import { costWords, modelWords } from "./words";
@@ -96,6 +97,24 @@ function Cell({ children, className }: { children: ReactNode; className?: string
   return <td className={`border-b border-line px-2 py-2 align-top ${className ?? ""}`}>{children}</td>;
 }
 
+/** A person's change to the ticket's rounds, as a row of the record: when, what, and what its next round reads. */
+function CarriedRow({ c }: { c: CarriedOnState }) {
+  return (
+    <tr data-record-carried-on={c.outcome}>
+      <Cell>
+        <span className="font-semibold text-ink">A person</span>
+      </Cell>
+      <Cell> </Cell>
+      <Cell className="whitespace-nowrap">
+        <When t={c.at} precision="second" age={false} />
+      </Cell>
+      <Cell> </Cell>
+      <Cell>{carriedOnTitle(c)}</Cell>
+      <Cell>{carriedOnWords(c)}</Cell>
+    </tr>
+  );
+}
+
 export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: number; onClose: () => void }) {
   const store = useStore();
   const cell = useScene((s) => (row ? (s.cells[row.ticketId] ?? null) : null));
@@ -125,7 +144,7 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
             <p className="mt-2 flex flex-wrap items-center gap-2 text-body-sm text-ink-muted">
               <StatePill state={row.state} />
               <span>
-                {row.risk ? `${row.risk} risk` : "Risk not recorded"}. Rounds used: {row.roundsUsed} of {MAX_ROUNDS}. Cost: {costWords(row.cost)}.
+                {row.risk ? `${row.risk} risk` : "Risk not recorded"}. Rounds used: {row.roundsUsed} of {row.roundLimit ?? MAX_ROUNDS}. Cost: {costWords(row.cost)}.
               </span>
             </p>
             <p className="mt-1 text-body-sm text-ink-muted" data-record-ids="">
@@ -133,7 +152,7 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
               Jira: {row.jira ? <span className="font-mono text-[13px] text-ink">{row.jira}</span> : "not recorded"}. Change record:{" "}
               {row.changeRecord ? <span className="break-all font-mono text-[13px] text-ink">{row.changeRecord}</span> : "not recorded"}.
             </p>
-            {visits.length === 0 ? (
+            {visits.length === 0 && cell?.runRecord?.outcome !== "abandoned" ? (
               <p className="mt-4 text-body-sm text-ink-muted">No station visit is recorded for this ticket yet.</p>
             ) : (
               <div className="mt-3 overflow-x-auto">
@@ -142,6 +161,7 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
                     <tr className="text-left text-label text-ink-muted">
                       <th scope="col" className="border-b border-line-strong px-2 py-1.5 font-semibold">Station</th>
                       <th scope="col" className="border-b border-line-strong px-2 py-1.5 font-semibold">Worker</th>
+                      <th scope="col" className="border-b border-line-strong px-2 py-1.5 font-semibold">Started</th>
                       <th scope="col" className="border-b border-line-strong px-2 py-1.5 font-semibold">Time</th>
                       <th scope="col" className="border-b border-line-strong px-2 py-1.5 font-semibold">Result</th>
                       <th scope="col" className="border-b border-line-strong px-2 py-1.5 font-semibold">What to look at</th>
@@ -151,7 +171,13 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
                     {visits.map((v, i) => {
                       const column = columnOf(v.station) as number;
                       const again = visits.slice(0, i).some((x) => columnOf(x.station) === column);
+                      // A person's change to the rounds, between the visits it came between.
+                      const carried = (cell?.carriedOn ?? []).filter((c) => c.at <= v.enteredAt && (i === 0 || c.at > visits[i - 1]!.enteredAt));
                       return (
+                        <Fragment key={`${v.station}-${v.enteredAt}-${i}`}>
+                        {carried.map((c) => (
+                          <CarriedRow key={c.eventId} c={c} />
+                        ))}
                         <tr key={`${v.station}-${v.enteredAt}-${i}`}>
                           <Cell>
                             <span className="font-semibold text-ink">{v.station === "human-approval" ? "A person's approval" : v.station === "audit" ? "Readiness check" : LINE_STATIONS[column]!.name}</span>
@@ -159,12 +185,36 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
                             <span className="block text-caption text-ink-subtle">{visitRoundWords(cell, v)}</span>
                           </Cell>
                           <Cell>{cell ? (visitModels(cell, v) ?? <span className="text-ink-muted">not recorded</span>) : null}</Cell>
+                          <Cell className="whitespace-nowrap">
+                            <When t={v.enteredAt} precision="second" age={false} />
+                          </Cell>
                           <Cell className="whitespace-nowrap tabular">{visitTime(v, now)}</Cell>
                           <Cell>{visitStateWords(v)}</Cell>
                           <Cell>{cell ? <LookAt cell={cell} v={v} onEvidence={evidence} /> : null}</Cell>
                         </tr>
+                        </Fragment>
                       );
                     })}
+                    {(cell?.carriedOn ?? [])
+                      .filter((c) => c.at > (visits.at(-1)?.enteredAt ?? Number.NEGATIVE_INFINITY))
+                      .map((c) => (
+                        <CarriedRow key={c.eventId} c={c} />
+                      ))}
+                    {cell?.runRecord?.outcome === "abandoned" ? (
+                      // How it ended, as cleanup's run record says, with when.
+                      <tr data-record-abandoned="">
+                        <Cell>
+                          <span className="font-semibold text-ink">Abandoned</span>
+                        </Cell>
+                        <Cell>Clean-up station</Cell>
+                        <Cell className="whitespace-nowrap">
+                          <When t={cell.runRecord.at} precision="second" age={false} />
+                        </Cell>
+                        <Cell> </Cell>
+                        <Cell>Abandoned</Cell>
+                        <Cell>Its work was deleted when it was abandoned. Nothing of it was merged.</Cell>
+                      </tr>
+                    ) : null}
                   </tbody>
                 </table>
               </div>

@@ -5,10 +5,13 @@
 /**
  * What a time `t` means, set once by the app when it chooses its source (App.tsx):
  * - `scenario`: the simulation's ms from the scenario start, printed as a time code (mm:ss.s);
- * - `wall`: real history's `order_ms` (Unix ms), printed as wall-clock UTC (HH:MM:SS).
+ * - `wall`: real history's `order_ms` (Unix ms), printed as a moment with its date, in the person's
+ *   locale and time zone ("Today 14:53:26"; see `wallMoment`).
  * Only one source is shown at a time, so one module-wide base is enough and every caller of
  * `timecode` prints the right kind of time without being told.
  */
+import { momentWords, spanWords, type MomentWords, type Precision } from "@mach/ui/datetime";
+
 export type TimeBase = "scenario" | "wall";
 let timeBase: TimeBase = "scenario";
 export function setTimeBase(base: TimeBase): void {
@@ -33,9 +36,43 @@ export function utcDate(t: number): string {
   return `${d.getUTCDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
-/** Factory time as mm:ss.s from the scenario start (the spec's time code); for real history, wall-clock UTC. */
+/**
+ * A real-history moment in words, with its date, in the person's locale and time zone (the shared
+ * formatter, @mach/ui/datetime): "Today 14:53", "Yesterday 20:02:23", "24 Nov 20:02", with the full
+ * moment and zone in `exact` and its age when older (`age`, "3 d ago").
+ */
+export function wallMoment(t: number, precision: Precision = "minute", now?: number): MomentWords {
+  return momentWords(t, { precision, ...(now !== undefined ? { now } : {}) });
+}
+
+/**
+ * Factory time as mm:ss.s from the scenario start (the spec's time code); for real history, the moment
+ * with its date ("Today 14:53:26" to the second; "Today 14:53" when `tenths` is false).
+ */
 export function timecode(t: number, tenths = true): string {
-  if (timeBase === "wall") return utcClock(t, tenths);
+  if (timeBase === "wall") return wallMoment(t, tenths ? "second" : "minute").text;
+  return scenarioCode(t, tenths);
+}
+
+/** As `timecode`, worded for inside a sentence: "since today 14:53". */
+export function timecodeInline(t: number, tenths = false): string {
+  if (timeBase === "wall") return wallMoment(t, tenths ? "second" : "minute").inline;
+  return scenarioCode(t, tenths);
+}
+
+/**
+ * A span of two moments: real history to the second, the second one without its day when it is the
+ * same day ("Today 14:53:26 to 14:55:02"); the Simulation's two time codes. `toPrefix` goes before the
+ * second ("at most ").
+ */
+export function spanCode(from: number, to: number, toPrefix = ""): string {
+  if (timeBase !== "wall") return `${scenarioCode(from, false)} to ${toPrefix}${scenarioCode(to, false)}`;
+  const words = spanWords(from, to, { precision: "second" });
+  const head = `${wallMoment(from, "second").text} to `;
+  return `${head}${toPrefix}${words.slice(head.length)}`;
+}
+
+function scenarioCode(t: number, tenths: boolean): string {
   const total = Math.max(0, t) / 1000;
   const m = Math.floor(total / 60);
   const s = total - m * 60;

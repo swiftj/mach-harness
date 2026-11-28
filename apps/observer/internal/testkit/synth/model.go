@@ -48,6 +48,10 @@ type Options struct {
 	// records. Off by default, so every recorded history stays byte for byte as it was (compat_test.go).
 	// Not with Analytics, whose expected figures it would change.
 	M15 bool
+	// Stopped adds tickets stopped for a person after their last round, one carried on by a person's
+	// decision (one more round) and one given a fresh set of rounds by a person starting the Factory
+	// (stopped.go). Off by default; not with Analytics.
+	Stopped bool
 }
 
 // DefaultEnd is the fixed end of a default history, so the default output is repeatable.

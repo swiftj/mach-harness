@@ -43,10 +43,11 @@ test("I-09: one duration vocabulary: the shell's, Analytics' and the data layer'
   for (let h = 1; h < 72; h++) assert.doesNotMatch(Fmt.durationText(h * 3_600_000), / 0 (min|h)$/);
 });
 
-test("I-09: a moment reads as the shell says it: day, then HH:MM:SS UTC", () => {
+test("I-09: a moment reads as the shell says it: the shared moment words, to the second", () => {
   const t = Date.UTC(2026, 10, 4, 9, 29, 43);
-  assert.equal(Fmt.clockText(t), "4 Nov, 09:29:43 UTC");
-  assert.equal(Fmt.clockText(t), `${Fmt.dayText(t)}, ${time.utcClock(t)} UTC`);
+  assert.equal(Fmt.clockText(t), time.wallMoment(t, "second").text);
+  assert.equal(Fmt.clockInline(t), time.wallMoment(t, "second").inline);
+  assert.doesNotMatch(Fmt.clockText(t), /UTC/);
 });
 
 test("I-10: basis words are the shared ones: measured, bounded, inferred, open, unknown, not recorded", () => {

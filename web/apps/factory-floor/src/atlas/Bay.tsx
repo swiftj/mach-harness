@@ -40,12 +40,13 @@ import {
   type Vec3,
 } from "@mach/ui";
 import { AgentHead, FloorLettering, PlanDimension, StationSymbol, TaskBoard as TaskBoardMark, cellAnatomy, cellStages, factoryTokens, lampPool, markLook, useFactoryIds, type MarkState, type StationKind, type TaskCell } from "@mach/ui";
-import { BELT_PHASES, WAITING_FOR_CLEANUP, waitingForCleanup, activityLabel, activityOf, capacityWaitOf, type CapacityWaitState, type GateRefusal, type ActivityState, agentTimingAt, isKnown, ref, visitTimingAt, type CellState, type EntityRef, type ExecutionState, type GateState, type SceneLog, type StationId } from "../sim";
+import { allowanceAt, nextRoundAfter, roundLimit, roundNow, roundOfWords, shownRoundAt, BELT_PHASES, WAITING_FOR_CLEANUP, waitingForCleanup, activityLabel, activityOf, capacityWaitOf, type CapacityWaitState, type GateRefusal, type ActivityState, agentTimingAt, isKnown, ref, visitTimingAt, type CellState, type EntityRef, type ExecutionState, type GateState, type SceneLog, type StationId } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, useNowKeyed } from "./context";
 import { activityMark, activityWord, visitMark, visitWord, animating, anim, callsOf, countedToolsOf, fmtElapsed, idOf, secondOf, lampLevel, gateView, gateWord, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PadName, type PlacedAgent, type ViewMode } from "./derive";
 import { FLOOR_Z, PLATE_Z, boxAt, type BaySlot, type PlantLayout } from "./layout";
 import { Card } from "./reduced";
+import { wallMoment } from "../shell/time";
 
 const CELL_W = 216;
 const CELL_D = 148;
@@ -66,7 +67,7 @@ function uiStage(stage: CellState["stage"]): UiStage {
  */
 function machineState(cell: CellState, kinds: readonly StationId[], named: StationId, activity: ActivityState | null = null): MachineState {
   if (cell.station && kinds.includes(cell.station)) {
-    return { state: activity && activity !== "executing" ? activityMark(activity) : "active", round: cell.round > 1 ? cell.round : undefined, word: cell.station === named ? undefined : `at ${cell.station}` };
+    return { state: activity && activity !== "executing" ? activityMark(activity) : "active", round: cell.round > 1 ? { n: roundNow(cell), of: roundLimit(cell) } : undefined, word: cell.station === named ? undefined : `at ${cell.station}` };
   }
   const last = [...cell.visits].reverse().find((v) => v.station === named);
   if (!last) {
@@ -74,14 +75,16 @@ function machineState(cell: CellState, kinds: readonly StationId[], named: Stati
     const other = [...cell.visits].reverse().find((v) => kinds.includes(v.station));
     return { state: "idle", word: other ? `not reached yet; ${other.station} ${other.leftAt === null ? "working" : `ended: ${visitWord(other)}`}` : "not reached yet" };
   }
-  const round = last.round > 1 ? last.round : undefined;
+  // A past visit keeps the round and the limit it had when it ran, whatever a later carry-on changed.
+  const round = last.round > 1 ? { n: shownRoundAt(cell, last.round, last.enteredAt), of: Math.max(allowanceAt(cell, last.enteredAt).max, shownRoundAt(cell, last.round, last.enteredAt)) } : undefined;
   const state = visitMark(last);
   return { state, round, word: state === "succeeded" || state === "failed" || state === "active" ? undefined : visitWord(last) };
 }
 
 interface MachineState {
   state: MarkState;
-  round?: number;
+  /** The judging round as a person read it then, and the limit then (sim/rounds.ts). */
+  round?: { readonly n: number; readonly of: number };
   /** Words for its accessible name when the state alone would mislead. */
   word?: string;
 }
@@ -408,7 +411,8 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
           fraction={fraction}
           settled={finished}
           planned={st.state === "idle"}
-          round={st.round}
+          round={st.round?.n}
+          rounds={st.round?.of}
           at={at}
           lod={lod}
           dimmed={!dimCell && isDimmed(highlight, cellRef, sref)}
@@ -442,13 +446,17 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   );
 }
 
-/** A recorded moment as a clock time to the second, UTC. */
+/** A recorded moment with its date, to the second, in the person's locale and time zone ("today 22:02:36"). */
 function clockS(t: number): string {
-  const d = new Date(t);
-  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")} UTC`;
+  return wallMoment(t, "second").inline;
 }
 
-/** Refusals grouped by gate and reason, newest last: "verify.start (incomplete-evidence) ×2, last 22:53:10 UTC". */
+/** Refusals grouped by gate and reason, newest last: "verify.start (incomplete-evidence) ×2, last today 22:53:10". */
+/** A refused gate in words where its code would mislead a reader (the round limit); other gates by their recorded name. */
+function refusedGateWords(gate: string): string {
+  return gate === "round-limit" ? "another round: its rounds are used" : gate;
+}
+
 function refusalGroups(refusals: readonly GateRefusal[]): { key: string; gate: string; reason: string | null; count: number; last: number }[] {
   const groups = new Map<string, { key: string; gate: string; reason: string | null; count: number; last: number }>();
   for (const r of refusals) {
@@ -466,7 +474,7 @@ function refusalGroups(refusals: readonly GateRefusal[]): { key: string; gate: s
 function noticesWords(wait: CapacityWaitState | null, refusals: readonly GateRefusal[]): string {
   const out: string[] = [];
   if (wait) out.push(`waits for an execution place since ${clockS(wait.since)}${wait.limit !== null ? `, at most ${wait.limit} at once` : ""}`);
-  for (const g of refusalGroups(refusals)) out.push(`refused at ${g.gate}${g.reason ? ` (${g.reason})` : ""}${g.count > 1 ? ` ${g.count} times` : ""}, last at ${clockS(g.last)}`);
+  for (const g of refusalGroups(refusals)) out.push(`refused at ${refusedGateWords(g.gate)}${g.reason && g.reason !== g.gate ? ` (${g.reason})` : ""}${g.count > 1 ? ` ${g.count} times` : ""}, last at ${clockS(g.last)}`);
   return out.join("; ");
 }
 
@@ -482,7 +490,7 @@ function Notices({ x, y, wait, refusals, overrides, lines: max }: { x: number; y
   const lines: { key: string; kind: "wait" | "refused" | "override"; text: string }[] = [];
   if (overrides.length) lines.push({ key: "over", kind: "override", text: `OVERRIDDEN ${overrides.map((o) => o.gate).join(", ")}` });
   if (wait) lines.push({ key: "wait", kind: "wait", text: `WAITS FOR AN EXECUTION PLACE${wait.limit !== null ? ` · MAX ${wait.limit}` : ""}` });
-  if (groups.length) lines.push({ key: "ref", kind: "refused", text: `REFUSED ${groups.map((g) => `${g.gate}${g.count > 1 ? ` ×${g.count}` : ""}`).join(", ")}` });
+  if (groups.length) lines.push({ key: "ref", kind: "refused", text: `REFUSED ${groups.map((g) => `${refusedGateWords(g.gate)}${g.count > 1 ? ` ×${g.count}` : ""}`).join(", ")}` });
   if (!lines.length) return null;
   // A dense plant at mid zoom letters only the first line (the element budget); near zoom letters all.
   const shown = lines.slice(0, max);
@@ -511,10 +519,9 @@ function Notices({ x, y, wait, refusals, overrides, lines: max }: { x: number; y
   );
 }
 
-/** A recorded moment as a clock time (live and replay times are Unix ms). */
+/** A recorded moment with its date (live and replay times are Unix ms), in the person's locale and time zone. */
 function clock(t: number): string {
-  const d = new Date(t);
-  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")} UTC`;
+  return wallMoment(t).inline;
 }
 
 /** An agent's state in words, for its accessible name. */
@@ -554,10 +561,10 @@ interface HitItem {
 function bayHits(bay: BaySlot, cell: CellState, agents: PlacedAgent[], gate: GateState | null, lod: Lod, st: Record<"intent" | "build" | "verify", MachineState>, activity?: string, notices = ""): HitItem[] {
   const { x, y } = bay.origin;
   const T = cell.ticketId;
-  const items: HitItem[] = [{ entity: ref.cell(T), label: `Cell ${T}: ${cell.stage}${activity ? `, ${activity.toLowerCase()}` : ""}, round ${cell.round} of 3${notices ? `; ${notices}` : ""}`, box: { x, y, w: CELL_W, d: CELL_D, z: FLOOR_Z, h: 0 } }];
+  const items: HitItem[] = [{ entity: ref.cell(T), label: `Cell ${T}: ${cell.stage}${activity ? `, ${activity.toLowerCase()}` : ""}, round ${roundOfWords(cell)}${cell.stage === "blocked" ? ", stopped for a person" : ""}${notices ? `; ${notices}` : ""}`, box: { x, y, w: CELL_W, d: CELL_D, z: FLOOR_Z, h: 0 } }];
   const machine = (pad: "intent" | "build" | "verify", station: "plan" | "build" | "verify", name: string, h: number) => {
     const s = st[pad];
-    items.push({ entity: ref.station(station, T), label: `${name} station, ${T}: ${s.state}${s.word ? ` (${s.word})` : ""}${s.round ? `, round ${s.round} of 3` : ""}`, box: boxAt(bay.pads[pad], 40, 40, h) });
+    items.push({ entity: ref.station(station, T), label: `${name} station, ${T}: ${s.state}${s.word ? ` (${s.word})` : ""}${s.round ? `, round ${s.round.n} of ${s.round.of}` : ""}`, box: boxAt(bay.pads[pad], 40, 40, h) });
   };
   machine("intent", "plan", "Plan", 12);
   machine("build", "build", "Build", 22);
@@ -642,7 +649,7 @@ function Console({ bay, cell, exec, t, reduced, lod, queued, stale }: { bay: Bay
         })}
       </g>
       {lod === "near" ? (
-        <FloorLettering at={{ x: x + 162, y: y + 14, z: FLOOR_Z }} text={running ? `mach:belt · ${cell.workflowPhase ?? "Preflight"}` : stale && exec?.workflowRunning ? `mach:belt · ${cell.workflowPhase ?? "Preflight"} · as last seen` : exec ? "mach:belt · idle" : "no execution"} size={6.5} font="mono" tone={running ? "live" : "subtle"} weight={500} decorative />
+        <FloorLettering at={{ x: x + 162, y: y + 14, z: FLOOR_Z }} text={running ? `mach:belt · ${cell.workflowPhase ?? "Preflight"}` : stale && exec?.workflowRunning ? `mach:belt · ${cell.workflowPhase ?? "Preflight"} · as last seen` : cell.stage === "blocked" ? "waits for a person" : exec ? "mach:belt · idle" : "no execution yet"} size={6.5} font="mono" tone={running ? "live" : "subtle"} weight={500} decorative />
       ) : null}
       {queued > 0 ? (
         // Workflow agents queued and not started (agent.queued): a count at the console, no figures.
@@ -870,6 +877,11 @@ function VerificationGate({ bay, gate: g, t, reduced, lod, dimmed }: { bay: BayS
 function VerifyLoop({ bay, cell, t, reduced, lod, dimmed }: { bay: BaySlot; cell: CellState; t: number; reduced: boolean; lod: Lod; dimmed: boolean }) {
   const failed = [...cell.verifications].reverse().find((v) => v.status === "FAIL_WITH_EVIDENCE" && v.decidedAt !== null);
   if (!failed || failed.decidedAt === null) return null;
+  // A later verification has run since: that return to build is over.
+  if (cell.verifications.at(-1) !== failed) return null;
+  // No return to build when no round follows: the failed round was the last, or a person must decide.
+  const next = nextRoundAfter(cell, failed.round);
+  if (next === null) return null;
   const p = q(anim("verifyReturn", t - failed.decidedAt, reduced));
   const from = { ...bay.pads.verify, y: bay.pads.verify.y - 6, z: FLOOR_Z + 18 };
   const to = { ...bay.pads.build, y: bay.pads.build.y - 6, z: FLOOR_Z + 22 };
@@ -878,7 +890,8 @@ function VerifyLoop({ bay, cell, t, reduced, lod, dimmed }: { bay: BaySlot; cell
   const ride = pointAlong(liftedArc(from, to, 34, 28), cardP).point;
   return (
     <g>
-      <RetryLoop from={from} to={to} round={failed.round + 1} progress={p} lod={lod} dimmed={dimmed} />
+      {/* One reading on every screen: the round in force and its limit, as the Facts and the Line say it. */}
+      <RetryLoop from={from} to={to} round={roundNow(cell)} maxRounds={roundLimit(cell)} progress={p} lod={lod} dimmed={dimmed} />
       {p > 0.2 && p < 1 ? (
         findings ? (
           <g aria-hidden="true">

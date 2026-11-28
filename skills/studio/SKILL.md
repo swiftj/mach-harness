@@ -1,12 +1,23 @@
 ---
 name: studio
-description: MACH Product Studio, the product manager's workspace. Shapes ideas (brief, case, verdict) before epics; defines a project's vision and outcomes, its product principles, its epics, and one thin slice at a time through a guided interview (one yes-or-no question at a time); saves and resumes drafts; marks a finished slice ready for the builders, saving it as a GitHub issue under its epic (or to a folder); takes a ready slice back to change it; and shows what is on GitHub. Use when a product manager or founder wants to shape an idea, write a brief, ask if an idea is worth building, plan a product, define or change a project, set principles, add an epic, start or continue a slice, see where product work stands, mark a slice ready or change one that is ready, catch up with what others saved, look at requests, or move the whole project to another repository in one file. Works in a private draft workspace; the PM never runs Git or opens GitHub. It never starts engineering work. Not for grooming an engineering ticket or a crash report: that is the intent skill.
-argument-hint: "[what you want to do, an idea, slice or epic ID, a project file to bring in, or nothing to see where things stand]"
+description: MACH Product Studio, the product manager's workspace. Shapes ideas (brief, case, verdict) before epics; defines a project's vision and outcomes, its product principles, its epics, and one thin slice at a time through a guided interview (one yes-or-no question at a time); saves and resumes drafts; marks a finished slice ready for the builders, saving it as a GitHub issue under its epic (or to a folder); takes a ready slice back to change it; and shows what is on GitHub. Typed with nothing after it, it opens Product Studio, the visual app, in the person's browser; when loading this skill yourself, pass the person's request as its input. Use when a product manager or founder wants to shape an idea, write a brief, ask if an idea is worth building, plan a product, define or change a project, set principles, add an epic, start or continue a slice, see where product work stands, mark a slice ready or change one that is ready, catch up with what others saved, look at requests, or move the whole project to another repository in one file. Works in a private draft workspace; the PM never runs Git or opens GitHub. It never starts engineering work. Not for grooming an engineering ticket or a crash report: that is the intent skill.
+argument-hint: "[nothing to open Product Studio in your browser | status | what you want to do, an idea, slice or epic ID, a project file to bring in | link | stop]"
 effort: high
+allowed-tools:
+  - Bash(python3 "${CLAUDE_SKILL_DIR}/../run/scripts/app.py" *)
+  - Bash(python3 ${CLAUDE_SKILL_DIR}/../run/scripts/app.py *)
 compatibility: "python3 >= 3.8, git"
 ---
 
 # MACH Product Studio
+
+```!
+python3 "${CLAUDE_SKILL_DIR}/../run/scripts/app.py" for-skill studio <<'!MACH_TYPED_WORDS_END'
+$ARGUMENTS
+!MACH_TYPED_WORDS_END
+```
+
+**First, MACH's answer.** If lines from MACH stand between `MACH-ANSWER-BEGIN` and `MACH-ANSWER-END` just above, MACH has already done what the person asked (opened Product Studio in their browser, given its link, or stopped it). Reply with exactly the sentences between those two lines, each on its own line, with a link exactly as written. Add nothing, ask nothing, run nothing else, and stop: the rest of this skill is for the person's next message. If nothing from MACH stands there, read on.
 
 Input: $ARGUMENTS
 
@@ -38,9 +49,9 @@ Everything you produce is a **draft in the PM's own workspace** until they appro
 
 1. Run `STUDIO refresh`, then `STUDIO status`. Refresh first brings in, by itself, what GitHub holds for this repository's project that the workspace lacks (`joined`): in a fresh clone of a repository someone else defined a product in, that is the whole project, its principles and technical needs, every epic and every slice in the state GitHub holds it, as the author published it. Later refreshes bring only what others published since and newer versions of slices the PM holds unchanged. Then it reads what changed on GitHub and the open requests, without touching the PM's own drafts or their checkout. If `joined.taken.project` is true, tell the PM in one or two lines, using `joined.in_words[0]` as written (for example "This repository's project is Rulebook Explorer. MACH brought it in from GitHub: 3 epics and 10 slices, 8 ready and 2 shipped."), and carry on with what they asked. Otherwise mention `joined.taken` only when it brought something (`joined.note`). If GitHub could not be read (`github.refreshed: false`), say so in one line using `github.problem` and carry on with what is there. Status prints every artifact with its state and a `suggested_next` list.
 2. Make sure the visual app is running and get its link: **The visual app**, steps 1 to 3. It opens no browser. Skip this in headless mode or inside a supervised Factory execution.
-3. Tell the PM, briefly, what refresh reported under `github.slices`: for each slice, its issue number beside its ID, where it stands (`state_label`: ready, being built, a question from the builders, shipped), and anything flagged: `question` (the builders need the PM's answer; see **The builders' question**), `changed_on_github` (changed on GitHub after the PM approved it, so the builders will not take it), `newer_elsewhere` (someone else saved a newer version) or `number_taken` (another slice on GitHub uses this number). Mention anything under `approvals_withdrawn`. If something is flagged, go to **Keeping in step** before other work that touches it. Add the app's one line from **The visual app**, step 4.
+3. Tell the PM, briefly, what refresh reported under `github.slices`: for each slice, its issue number beside its ID, where it stands (`state_label`: ready, being built, a question from the builders, shipped), and anything flagged: `question` (the builders need the PM's answer; see **The builders' question**), `changed_on_github` (changed on GitHub after the PM approved it, so the builders will not take it), `newer_elsewhere` (someone else saved a newer version) or `number_taken` (another slice on GitHub uses this number). Mention anything under `approvals_withdrawn`. If something is flagged, go to **Keeping in step** before other work that touches it. Add the app's one line from **The visual app**, step 1.
 4. Decide what the PM wants from the input:
-   - Nothing, or "where are we": summarize the status in a few lines (project, epics, slices in progress, what is approved) and offer the first suggested step.
+   - `status`, "where do things stand" or "where are we": summarize the status in a few lines (project, epics, slices in progress, what is approved) and offer the first suggested step.
    - No project here while `next_actions` has `join_project`: the project is on GitHub (or GitHub could not be read to know). Never offer to define a product, and never ask the PM to type what someone else already defined: say GitHub could not be read, in one line, with `joined.github.advice` when there is one (installing or signing in to the GitHub tool), and that MACH brings the project in at the next refresh. Run `STUDIO refresh` again when the PM asks or later in the conversation. Only if the PM says they want to start a product of their own here anyway: `STUDIO project init --name "<name>" --vision "<vision>" --outcome "<outcome>" --anyway` (their word; `project init` without it refuses while GitHub cannot be read, so no second project is started by mistake).
    - A workspace that had its own project, never saved to GitHub, takes the repository's project from GitHub at refresh: read the PM `joined.replaced_project.words` (where their own project's words are kept); their epics and drafts stay as drafts.
    - Next actions `choose_version` (a slice in a workspace from before 0.28 that MACH cannot tell apart from GitHub's: the PM keeps theirs, `reconcile <ID> --take mine`, or takes GitHub's, `--take theirs`, theirs kept first), `reopen_changed` (an approved slice edited here without reopening: reopen it first) and `import_waiting` (slices from GitHub wait for a project file being brought in: finish it or set it aside). When someone else saved a newer version and the copy here differs, the first step is to look at the two; then take theirs, or keep yours as a new version on the PM's explicit word. Never lead with marking ready over it.
@@ -55,16 +66,16 @@ Everything you produce is a **draft in the PM's own workspace** until they appro
    - An idea to explore, argue for and size before any epic ("shape an idea", "write a brief", "is this worth building"), or the ideas board: go to **Shaping an idea**.
    - Approving a slice or handing it to the builders: go to **Marking a slice ready**.
    - Taking the project to another repository, bringing in a project file made by MACH, or "what was SLICE-007 before?": go to **Moving the project to another repository**.
-   - Opening the visual app ("open the app", "show me this in the browser"): go to **The visual app**, step 5.
-   - A new link to the app ("a new link", "the link does not work", another browser): go to **The visual app**, step 6.
+   - Opening the visual app ("open the app", "show me this in the browser"): go to **The visual app**, step 2.
+   - A new link to the app ("a new link", "the link does not work", another browser, `link`): go to **The visual app**, step 3. `stop`: step 4.
 
 ---
 
 ## The visual app
 
-The same workspace has a visual interface that runs on the PM's own machine. It works on the same drafts through the same `STUDIO`, so the PM can move between it and this conversation freely. The PM opens it by typing `/mach-app` (`/mach:app` with the plugin). MACH then starts the release of Product Studio that matches the MACH installed here, replacing an older one, and opens it in the PM's browser.
+The same workspace has a visual interface that runs on the PM's own machine. It works on the same drafts through the same `STUDIO`, so the PM can move between it and this conversation freely. The PM opens it by typing `/mach-studio` with nothing after it (`/mach:studio` with the plugin), or `/mach studio`. MACH then starts the release of Product Studio that matches the MACH installed here, replacing an older one, and opens it in the PM's browser. `/mach-studio link` gives a fresh link without opening a browser, and `/mach-studio stop` stops it.
 
-`APP` below means `python3 "${CLAUDE_SKILL_DIR}/../app/scripts/app.py"`. Run it from the project, exactly as written here, and reply with its sentences as they are, each on its own line, with a link exactly as written. Add nothing to them and run nothing else for the app: `APP` finds the program, brings it up to date, starts it, stops an older one and opens the browser itself.
+`APP` below means `python3 "${CLAUDE_SKILL_DIR}/../run/scripts/app.py"`. Run it from the project, exactly as written here, and reply with its sentences as they are, each on its own line, with a link exactly as written. Add nothing to them and run nothing else for the app: `APP` finds the program, brings it up to date, starts it, stops an older one and opens the browser itself.
 
 1. **At the start of a conversation**, run `APP link` once and give the PM its sentences in one or two lines with what you tell them about where things stand. It starts the app quietly when it is not running and opens no browser. If it says the app is not installed, say that in one short line and carry on here.
 2. **"Open the app"**: run `APP`. It opens the app in the PM's browser and gives a fresh link for a second browser.
