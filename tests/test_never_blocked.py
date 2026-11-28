@@ -66,7 +66,7 @@ class OneTicketTest(ClaimBase):
         step = json.loads(out)
         self.assertEqual((step["action"], step["stop"]), ("build", False))
         self.assertEqual(list(step)[0], "warnings")
-        self.assertRegex(step["warnings"][0], r"^Another worker was handed the build step for this ticket at \d\d:\d\d UTC and may still be at work\. "
+        self.assertRegex(step["warnings"][0], r"^Another worker was handed the build step for this ticket at (?:\d{4}-\d\d-\d\d )?\d\d:\d\d UTC and may still be at work\. "
                                               r"You have taken it over; that worker is stopped at its next step\.$")
         self.assertNotIn(OTHER, out)
 
@@ -77,7 +77,7 @@ class OneTicketTest(ClaimBase):
         for extra in ((), ("--holder", MINE)):
             step = self.next("T-1", *extra)
             self.assertEqual((step["action"], step["needs"]), ("stop", "worker-in-cell"), extra)
-            self.assertRegex(step["reason"], r"^Another worker was handed the plan step at \d\d:\d\d UTC\. Say /mach T-1 and MACH takes it over\.$")
+            self.assertRegex(step["reason"], r"^Another worker was handed the plan step at (?:\d{4}-\d\d-\d\d )?\d\d:\d\d UTC\. Say /mach T-1 and MACH takes it over\.$")
         self.assertEqual(self.path().read_text(), before, "a look writes no claim")
         self.assertEqual(C.displaced_all(self.path().parent), {}, "and displaces nobody")
 
@@ -254,7 +254,7 @@ class DisplacedWorkerTest(ClaimBase):
         (folder / "build.json").write_text(json.dumps({"loop": 0, "deviations": []}))
         (folder / "build-report.json").write_text(json.dumps({"review_loop": 0, "deviations": []}))
         code, _, err = capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])
-        self.assertRegex(err, r"1 commit\(s\) were made on this branch outside MACH's stations since the take-over at \d\d:\d\d UTC \("
+        self.assertRegex(err, r"1 commit\(s\) were made on this branch outside MACH's stations since the take-over at (?:\d{4}-\d\d-\d\d )?\d\d:\d\d UTC \("
                               + late[:10] + r"\)\. They are part of this change now: reviewers see them\. If they are not wanted, remove them "
                               r"before the next step\.")
         self.assertNotIn("worker taken over", err, "who made it is not known, so nobody is named")

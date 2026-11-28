@@ -610,7 +610,7 @@ class CommandTest(Base):
         claim(self, "built", minutes_ago=10)
         result, out = self.take_over_cli("--via=floor")
         self.assertEqual((result["done"], result["option"], result["took_over"]["taken"], result["took_over"]["step"]), (True, "take-over", True, "review"))
-        self.assertRegex(result["now"], r"^Dana Smith took over LOCAL-001's review step\. Another worker had been handed the review step at \d\d:\d\d UTC: "
+        self.assertRegex(result["now"], r"^Dana Smith took over LOCAL-001's review step\. Another worker had been handed the review step at (?:\d{4}-\d\d-\d\d )?\d\d:\d\d UTC: "
                                         r"it stops at its next step, and nothing it had not committed is used\. ")
         self.assertRegex(result["now"], r"No Factory is running here\. /mach(:run)? LOCAL-001 in Claude Code carries it on: it goes on from where the "
                                         r"other worker left it\.$")
@@ -659,7 +659,7 @@ class CommandTest(Base):
             result, _ = self.take_over_cli("--via=floor", carry={"supervisor": "woken", "pid": 9, "why_not": None, "given": [TICKET], "not_given": []})
         self.assertEqual(stopped, [[run.execution_holder(execution)]], "the supervisor's own stop for one execution ends the run")
         self.assertEqual(given, [[TICKET]], "the person said the Factory carries it on: the ticket is the supervisor's again")
-        self.assertRegex(result["now"], r"It was a Factory run, handed the verify step at \d\d:\d\d UTC: MACH ended that run, and its worker stops at its next step\. "
+        self.assertRegex(result["now"], r"It was a Factory run, handed the verify step at (?:\d{4}-\d\d-\d\d )?\d\d:\d\d UTC: MACH ended that run, and its worker stops at its next step\. "
                                         r"The Factory carries it on in the background: it goes on from where the other worker left it\.$")
 
 
